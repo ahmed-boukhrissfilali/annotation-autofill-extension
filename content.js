@@ -4,19 +4,62 @@ if (!window.__annotFill) {
   let stop = false;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // Convert Western digits to Arabic word equivalents, digit by digit.
-  // "7 8 9" → "سبعة ثمانية تسعة"   |   "788" → "سبعة ثمانية ثمانية"
-  const ARABIC_WORDS = {
-    '0': 'صفر', '1': 'واحد',   '2': 'اثنان',  '3': 'ثلاثة',
-    '4': 'أربعة', '5': 'خمسة', '6': 'ستة',    '7': 'سبعة',
-    '8': 'ثمانية', '9': 'تسعة',
-  };
+  // Convert a number to its full Arabic word representation.
+  // "7"   → "سبعة"
+  // "788" → "سبعمائة وثمانية وثمانون"
+  // "7 8 9" (space-separated in source) → each matched separately → "سبعة ثمانية تسعة"
+  function numberToArabicWords(n) {
+    if (n === 0) return 'صفر';
 
+    const ones = [
+      '', 'واحد', 'اثنان', 'ثلاثة', 'أربعة', 'خمسة',
+      'ستة', 'سبعة', 'ثمانية', 'تسعة', 'عشرة',
+      'أحد عشر', 'اثنا عشر', 'ثلاثة عشر', 'أربعة عشر', 'خمسة عشر',
+      'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر',
+    ];
+    const tens     = ['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
+    const hundreds = ['','مئة','مئتان','ثلاثمائة','أربعمائة','خمسمائة','ستمائة','سبعمائة','ثمانمائة','تسعمائة'];
+
+    function below100(n) {
+      if (n < 20) return ones[n];
+      const t = Math.floor(n / 10), u = n % 10;
+      return u === 0 ? tens[t] : ones[u] + ' و' + tens[t];
+    }
+
+    function below1000(n) {
+      const h = Math.floor(n / 100), r = n % 100;
+      if (h === 0) return below100(r);
+      if (r === 0) return hundreds[h];
+      return hundreds[h] + ' و' + below100(r);
+    }
+
+    function below1000000(n) {
+      const th = Math.floor(n / 1000), r = n % 1000;
+      if (th === 0) return below1000(r);
+      let tw;
+      if      (th === 1) tw = 'ألف';
+      else if (th === 2) tw = 'ألفان';
+      else if (th <= 10) tw = below1000(th) + ' آلاف';
+      else               tw = below1000(th) + ' ألف';
+      return r === 0 ? tw : tw + ' و' + below1000(r);
+    }
+
+    if (n < 1000000) return below1000000(n);
+
+    const m = Math.floor(n / 1000000), r = n % 1000000;
+    let mw;
+    if      (m === 1) mw = 'مليون';
+    else if (m === 2) mw = 'مليونان';
+    else if (m <= 10) mw = below1000(m) + ' ملايين';
+    else              mw = below1000(m) + ' مليون';
+    return r === 0 ? mw : mw + ' و' + below1000000(r);
+  }
+
+  // Replace each run of digits in text with its Arabic word form.
+  // Digits already separated by spaces are matched individually (digit-by-digit reading).
+  // Digits without spaces are converted as a whole number.
   function convertDigitsToWords(text) {
-    // Replace each run of digits with its Arabic word equivalents (one word per digit)
-    return text.replace(/\d+/g, match =>
-      match.split('').map(d => ARABIC_WORDS[d]).join(' ')
-    );
+    return text.replace(/\d+/g, match => numberToArabicWords(parseInt(match, 10)));
   }
 
   function click(el) {
