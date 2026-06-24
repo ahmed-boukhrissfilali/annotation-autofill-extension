@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Annotation Auto-Fill",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Remplissage automatique des dropdowns d'annotation",
   "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://api.mymemory.translated.net/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html"
   }
