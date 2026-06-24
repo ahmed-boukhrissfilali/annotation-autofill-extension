@@ -227,6 +227,11 @@ if (!window.__annotFill) {
       // Copy transcription text into Transliteration, with digits converted to Arabic words
       const transliterationText = convertDigitsToWords(plainText);
       setFieldValue(transliterationField, transliterationText);
+      // Force RTL direction so Arabic text starts from the right
+      transliterationField.setAttribute('dir', 'rtl');
+      transliterationField.style.direction  = 'rtl';
+      transliterationField.style.textAlign  = 'right';
+      transliterationField.style.unicodeBidi = 'embed';
       await sleep(300);
     } else {
       port.postMessage({ type: 'WARN', text: `Item ${i + 1}: champ Transliteration introuvable.` });
