@@ -4,6 +4,21 @@ if (!window.__annotFill) {
   let stop = false;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  // Convert Western digits to Arabic word equivalents, digit by digit.
+  // "7 8 9" → "سبعة ثمانية تسعة"   |   "788" → "سبعة ثمانية ثمانية"
+  const ARABIC_WORDS = {
+    '0': 'صفر', '1': 'واحد',   '2': 'اثنان',  '3': 'ثلاثة',
+    '4': 'أربعة', '5': 'خمسة', '6': 'ستة',    '7': 'سبعة',
+    '8': 'ثمانية', '9': 'تسعة',
+  };
+
+  function convertDigitsToWords(text) {
+    // Replace each run of digits with its Arabic word equivalents (one word per digit)
+    return text.replace(/\d+/g, match =>
+      match.split('').map(d => ARABIC_WORDS[d]).join(' ')
+    );
+  }
+
   function click(el) {
     ['mousedown', 'mouseup', 'click'].forEach(type =>
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
@@ -166,8 +181,9 @@ if (!window.__annotFill) {
     const transliterationField = await findByPlaceholder('transliteration', 5000);
 
     if (transliterationField) {
-      // Copy plain transcription text into Transliteration
-      setFieldValue(transliterationField, plainText);
+      // Copy transcription text into Transliteration, with digits converted to Arabic words
+      const transliterationText = convertDigitsToWords(plainText);
+      setFieldValue(transliterationField, transliterationText);
       await sleep(300);
     } else {
       port.postMessage({ type: 'WARN', text: `Item ${i + 1}: champ Transliteration introuvable.` });
