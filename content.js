@@ -1,387 +1,308 @@
-if (!window.__annotFill) {
-  window.__annotFill = true;
+(function () {
+  const _ex = document.getElementById('__AF_panel');
+  if (_ex) { _ex.style.display = ''; return; }
 
-  let stop = false;
+  let stop = false, _submitTimer = null;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // Arabic number converter
   function numberToArabicWords(n) {
-    if (n === 0) return 'صفر';
-    const ones = [
-      '', 'واحد', 'اثنان', 'ثلاثة', 'أربعة', 'خمسة',
-      'ستة', 'سبعة', 'ثمانية', 'تسعة', 'عشرة',
-      'أحد عشر', 'اثنا عشر', 'ثلاثة عشر', 'أربعة عشر', 'خمسة عشر',
-      'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر',
-    ];
-    const tens = ['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
-    const hundreds = ['','مائة','مائتان','ثلاثمائة','أربعمائة','خمسمائة','ستمائة','سبعمائة','ثمانمائة','تسعمائة'];
-
-    function below100(n) {
-      if (n < 20) return ones[n];
-      const t = Math.floor(n / 10), u = n % 10;
-      return u === 0 ? tens[t] : ones[u] + ' و' + tens[t];
-    }
-    function below1000(n) {
-      const h = Math.floor(n / 100), r = n % 100;
-      if (h === 0) return below100(r);
-      if (r === 0) return hundreds[h];
-      return hundreds[h] + ' و' + below100(r);
-    }
-    function below1000000(n) {
-      const th = Math.floor(n / 1000), r = n % 1000;
-      if (th === 0) return below1000(r);
-      let tw;
-      if      (th === 1) tw = 'ألف';
-      else if (th === 2) tw = 'ألفان';
-      else if (th <= 10) tw = below1000(th) + ' آلاف';
-      else               tw = below1000(th) + ' ألف';
-      return r === 0 ? tw : tw + ' و' + below1000(r);
-    }
-    if (n < 1000000) return below1000000(n);
-    const m = Math.floor(n / 1000000), r = n % 1000000;
-    let mw;
-    if      (m === 1) mw = 'مليون';
-    else if (m === 2) mw = 'مليونان';
-    else if (m <= 10) mw = below1000(m) + ' ملايين';
-    else              mw = below1000(m) + ' مليون';
-    return r === 0 ? mw : mw + ' و' + below1000000(r);
+    if (n===0) return 'صفر';
+    const ones=['',' واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
+    const tens=['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'];
+    const hundreds=['','مائة','مائتان','ثلاثمائة','أربعمائة','خمسمائة','ستمائة','سبعمائة','ثمانمائة','تسعمائة'];
+    function b100(n){if(n<20)return ones[n];const t=Math.floor(n/10),u=n%10;return u===0?tens[t]:ones[u]+' و'+tens[t];}
+    function b1000(n){const h=Math.floor(n/100),r=n%100;if(!h)return b100(r);if(!r)return hundreds[h];return hundreds[h]+' و'+b100(r);}
+    function b1m(n){const th=Math.floor(n/1000),r=n%1000;if(!th)return b1000(r);let tw;if(th===1)tw='ألف';else if(th===2)tw='ألفان';else if(th<=10)tw=b1000(th)+' آلاف';else tw=b1000(th)+' ألف';return r?tw+' و'+b1000(r):tw;}
+    if(n<1000000)return b1m(n);
+    const m=Math.floor(n/1000000),r=n%1000000;let mw;if(m===1)mw='مليون';else if(m===2)mw='مليونان';else if(m<=10)mw=b1000(m)+' ملايين';else mw=b1000(m)+' مليون';return r?mw+' و'+b1m(r):mw;
   }
+  function convertDigitsToWords(t){return t.replace(/\d+/g,m=>numberToArabicWords(parseInt(m,10)));}
 
-  function convertDigitsToWords(text) {
-    return text.replace(/\d+/g, match => numberToArabicWords(parseInt(match, 10)));
-  }
-
-  // French to Arabic translation via background service worker
   async function translateFrToAr(text) {
     return new Promise(resolve => {
-      chrome.runtime.sendMessage({ type: 'TRANSLATE_FR_AR', text }, res => {
-        if (chrome.runtime.lastError || !res) resolve(text);
-        else resolve(res.translated || text);
+      chrome.runtime.sendMessage({type:'TRANSLATE_FR_AR',text}, res => {
+        if(chrome.runtime.lastError||!res) resolve(text); else resolve(res.translated||text);
       });
     });
   }
 
-  // Build Transliteration text: French groups translated, Arabic digits converted
   async function buildTransliterationText(words) {
-    const groups = [];
-    let cur = null;
-    for (const { text, isFrench } of words) {
-      if (!text) continue;
-      if (!cur || cur.isFrench !== isFrench) {
-        cur = { isFrench, texts: [] };
-        groups.push(cur);
-      }
+    const groups=[]; let cur=null;
+    for (const {text,isFrench} of words) {
+      if(!text) continue;
+      if(!cur||cur.isFrench!==isFrench){cur={isFrench,texts:[]};groups.push(cur);}
       cur.texts.push(text);
     }
-    const parts = [];
-    for (const g of groups) {
-      const joined = g.texts.join(' ');
-      parts.push(g.isFrench ? await translateFrToAr(joined) : convertDigitsToWords(joined));
+    const parts=[];
+    for(const g of groups){
+      const j=g.texts.join(' ');
+      parts.push(g.isFrench?await translateFrToAr(j):convertDigitsToWords(j));
     }
     return parts.join(' ').trim();
   }
 
-  // DOM helpers
-  function click(el) {
-    ['mousedown', 'mouseup', 'click'].forEach(type =>
-      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
-    );
+  function click(el){['mousedown','mouseup','click'].forEach(t=>el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));}
+  function esc(){document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));}
+  function setReactTA(el,value){
+    const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;
+    s.call(el,value);
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  function setField(el,value){
+    if(el.tagName==='TEXTAREA') setReactTA(el,value);
+    else if(el.isContentEditable){el.focus();document.execCommand('selectAll',false,null);document.execCommand('insertText',false,value);}
   }
 
-  function escape() {
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  }
-
-  function setReactTextarea(el, value) {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-    setter.call(el, value);
-    el.dispatchEvent(new Event('input',  { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  function setEditableDiv(el, value) {
-    el.focus();
-    document.execCommand('selectAll', false, null);
-    document.execCommand('insertText', false, value);
-  }
-
-  function setFieldValue(el, value) {
-    if (el.tagName === 'TEXTAREA')  setReactTextarea(el, value);
-    else if (el.isContentEditable) setEditableDiv(el, value);
-  }
-
-  async function findByPlaceholder(text, ms = 5000) {
-    const lower = text.toLowerCase();
-    const t = Date.now();
-    while (Date.now() - t < ms) {
-      for (const el of [
-        ...document.querySelectorAll('textarea'),
-        ...document.querySelectorAll('[contenteditable="true"]'),
-      ]) {
-        const ph = (
-          el.placeholder ||
-          el.getAttribute('data-placeholder') ||
-          el.getAttribute('aria-placeholder') ||
-          ''
-        ).toLowerCase();
-        if (ph.includes(lower)) return el;
+  async function findByPH(text,ms=5000){
+    const lower=text.toLowerCase(),t=Date.now();
+    while(Date.now()-t<ms){
+      for(const el of[...document.querySelectorAll('textarea'),...document.querySelectorAll('[contenteditable="true"]')]){
+        const ph=(el.placeholder||el.getAttribute('data-placeholder')||el.getAttribute('aria-placeholder')||'').toLowerCase();
+        if(ph.includes(lower)) return el;
       }
       await sleep(60);
     }
     return null;
   }
 
-  // Dropdown helpers
-  // Finds the clickable trigger next to a label.
-  // Key fix: only strip * and non-breaking spaces ( ), NOT regular spaces,
-  // so "Primary Type" stays "Primary Type" and can be matched.
-  function findDropdownByLabel(labelText, root) {
-    root = root || document;
-    const search = labelText.toLowerCase();
-    for (const lbl of root.querySelectorAll('[data-baseweb="typo-labelxsmall"]')) {
-      const t = lbl.textContent
-        .replace(/\*/g, '')
-        .replace(/ /g, ' ')
-        .trim()
-        .toLowerCase();
-      if (!t.includes(search)) continue;
-
-      // Walk up the DOM (up to 6 levels) until we find a clickable trigger
-      for (let el = lbl.parentElement, d = 0; el && d < 6; el = el.parentElement, d++) {
-        const trigger =
-          el.querySelector('[data-baseweb="tag"][role="button"]') ||
-          el.querySelector('[role="combobox"]')                   ||
-          el.querySelector('[data-baseweb="select"]')             ||
-          el.querySelector('button');
-        if (trigger && !lbl.contains(trigger)) return trigger;
+  function findDD(labelText,root){
+    root=root||document;
+    const s=labelText.toLowerCase();
+    for(const lbl of root.querySelectorAll('[data-baseweb="typo-labelxsmall"]')){
+      const t=lbl.textContent.replace(/\*/g,'').replace(/ /g,' ').trim().toLowerCase();
+      if(!t.includes(s)) continue;
+      for(let el=lbl.parentElement,d=0;el&&d<6;el=el.parentElement,d++){
+        const tr=el.querySelector('[data-baseweb="tag"][role="button"]')||el.querySelector('[role="combobox"]')||el.querySelector('[data-baseweb="select"]')||el.querySelector('button');
+        if(tr&&!lbl.contains(tr)) return tr;
       }
     }
     return null;
   }
 
-  async function pickOption(trigger, value) {
-    // Prefer the inner interactive element; fall back to the container
-    const inner = trigger.matches('[role="button"],[role="combobox"],button')
-      ? trigger
-      : (trigger.querySelector('[role="button"],[role="combobox"],button') || trigger);
+  async function pickOpt(trigger,value){
+    const inner=trigger.matches('[role="button"],[role="combobox"],button')?trigger:(trigger.querySelector('[role="button"],[role="combobox"],button')||trigger);
     click(inner);
-
-    const t = Date.now();
-    let lb = null;
-    while (Date.now() - t < 3000) {
-      lb = document.querySelector('[role="listbox"]');
-      if (lb) break;
-      await sleep(60);
-    }
-    // Second attempt: click the container itself if no listbox appeared
-    if (!lb) {
-      click(trigger);
-      await sleep(300);
-      lb = document.querySelector('[role="listbox"]');
-    }
-    if (!lb) { escape(); return false; }
-
+    const t=Date.now();let lb=null;
+    while(Date.now()-t<3000){lb=document.querySelector('[role="listbox"]');if(lb)break;await sleep(60);}
+    if(!lb){click(trigger);await sleep(300);lb=document.querySelector('[role="listbox"]');}
+    if(!lb){esc();return false;}
     await sleep(80);
-    // The listbox nests options: outer <li role="option"> contains all choices,
-    // inner <div role="option"> contains exactly one label.
-    // Sort by textContent length (ascending) so the most specific element wins.
-    const allOpts = [...lb.querySelectorAll('[role="option"]')];
-    const match = allOpts
-      .filter(o => o.textContent.trim().toLowerCase().includes(value.toLowerCase()))
-      .sort((a, b) => a.textContent.trim().length - b.textContent.trim().length)[0];
-    if (match) { click(match); await sleep(300); return true; }
-    escape(); await sleep(150); return false;
+    const match=[...lb.querySelectorAll('[role="option"]')].sort((a,b)=>a.textContent.trim().length-b.textContent.trim().length).find(o=>o.textContent.trim().toLowerCase().includes(value.toLowerCase()));
+    if(match){click(match);await sleep(300);return true;}
+    esc();await sleep(150);return false;
   }
 
-  // Fill all 4 dropdowns. Secondary Language = French if French detected, else NONE.
-  // root   = element to scope the search (pass the item in read-only mode)
-  // anchor = element to scroll back to after each selection (prevents page jumping)
-  async function fillDropdowns(hasFrench, root, anchor) {
-    const dropdowns = [
-      { label: 'Primary Type',               value: 'Speech'  },
-      { label: 'Loudness Level',             value: 'Normal'  },
-      { label: 'Segment Primary Language',   value: 'Arabic'  },
-      { label: 'Segment Secondary Language', value: hasFrench ? 'French' : 'NONE' },
-    ];
-    for (const { label, value } of dropdowns) {
-      const trigger = findDropdownByLabel(label, root);
-      if (!trigger) continue;
-      // Already has the right value - skip to avoid unnecessary re-renders
-      const current = trigger.textContent.toLowerCase();
-      if (current.includes(value.toLowerCase())) continue;
-      await pickOption(trigger, value);
-      // Re-scroll to the item after each selection (page may jump otherwise)
-      if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  async function fillDDs(hasFrench,root,anchor){
+    const dd=[{label:'Primary Type',value:'Speech'},{label:'Loudness Level',value:'Normal'},{label:'Segment Primary Language',value:'Arabic'},{label:'Segment Secondary Language',value:hasFrench?'French':'NONE'}];
+    for(const{label,value}of dd){
+      const tr=findDD(label,root);
+      if(!tr) continue;
+      if(tr.textContent.toLowerCase().includes(value.toLowerCase())) continue;
+      await pickOpt(tr,value);
+      if(anchor) anchor.scrollIntoView({behavior:'smooth',block:'center'});
       await sleep(300);
     }
   }
 
-  // Span analysis
-  function getTranscriptionP(item) {
-    for (const lbl of item.querySelectorAll('[data-baseweb="typo-labelxsmall"]')) {
-      if (lbl.textContent.trim() === 'Transcription') {
-        let el = lbl.nextElementSibling;
-        while (el) { if (el.tagName === 'P') return el; el = el.nextElementSibling; }
-      }
+  function getTrP(item){
+    for(const lbl of item.querySelectorAll('[data-baseweb="typo-labelxsmall"]')){
+      if(lbl.textContent.trim()==='Transcription'){let el=lbl.nextElementSibling;while(el){if(el.tagName==='P')return el;el=el.nextElementSibling;}}
     }
     return item.querySelector('p[dir="auto"]');
   }
 
-  function analyzeSpans(p) {
-    if (!p) return { words: [], plainText: '', taggedText: '', hasFrench: false };
-    let hasFrench = false;
-
-    const words = [...p.querySelectorAll('span')].map(span => {
-      const raw = span.textContent;
-      const wasTagged = /<\/?lang:French>/i.test(raw);
-      const text = raw.replace(/<\/?lang:French>/gi, '').trim();
-      if (!text) return null;
-      // Any single Latin letter = French/foreign word (Arabic script never uses Latin)
-      const isFrench =
-        wasTagged ||
-        span.className.includes('jGNzYJ') ||
-        /[a-zA-ZÀ-ɏ]/.test(text);
-      if (isFrench) hasFrench = true;
-      return { text, isFrench };
+  function analyzeSpans(p){
+    if(!p) return{words:[],plainText:'',taggedText:'',hasFrench:false};
+    let hasFrench=false;
+    const words=[...p.querySelectorAll('span')].map(span=>{
+      const raw=span.textContent,wasTagged=/<\/?lang:French>/i.test(raw);
+      const text=raw.replace(/<\/?lang:French>/gi,'').trim();
+      if(!text) return null;
+      const isFrench=wasTagged||span.className.includes('jGNzYJ')||/[a-zA-ZÀ-ɏ]/.test(text);
+      if(isFrench) hasFrench=true;
+      return{text,isFrench};
     }).filter(Boolean);
-
-    const plainText  = words.map(w => w.text).join(' ').trim();
-    const taggedText = words.map(({ text, isFrench }) =>
-      isFrench ? text + '</lang:French>' : text
-    ).join(' ').trim();
-
-    return { words, plainText, taggedText, hasFrench };
+    return{words,plainText:words.map(w=>w.text).join(' ').trim(),taggedText:words.map(({text,isFrench})=>isFrench?text+'</lang:French>':text).join(' ').trim(),hasFrench};
   }
 
-  // Item processing
-  function clickEditBtn(item) {
-    for (const btn of item.querySelectorAll('button[data-baseweb="button"]')) {
-      if (btn.textContent.trim().toLowerCase() === 'edit') {
-        click(btn); return true;
-      }
+  function clickEdit(item){
+    for(const btn of item.querySelectorAll('button[data-baseweb="button"]')){
+      if(btn.textContent.trim().toLowerCase()==='edit'){click(btn);return true;}
     }
     return false;
   }
 
-  async function clickSaveChanges() {
-    for (const btn of document.querySelectorAll('button[data-baseweb="button"]')) {
-      const txt = btn.textContent.trim().toLowerCase();
-      if (txt.includes('save') || txt.includes('sauvegarder')) {
-        click(btn); await sleep(600); return true;
-      }
+  async function save(){
+    for(const btn of document.querySelectorAll('button[data-baseweb="button"]')){
+      const t=btn.textContent.trim().toLowerCase();
+      if(t.includes('save')||t.includes('sauvegarder')){click(btn);await sleep(600);return true;}
     }
     return false;
   }
 
-  // Click the Resume button if it appears on the page (session timeout / interruption)
-  async function clickResumeIfPresent() {
-    for (const btn of document.querySelectorAll('button')) {
-      if (/resum/i.test(btn.textContent.trim())) {
-        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        await sleep(600);
-        return true;
-      }
-    }
+  async function clickResume(){
+    const btn=document.querySelector('button[aria-label="Resume"]')||[...document.querySelectorAll('button')].find(b=>/^resum/i.test(b.textContent.trim()));
+    if(btn){btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));await sleep(800);return true;}
     return false;
   }
 
-  async function processItem(item, cfg, i, tot, port) {
-    // 0. Click Resume if the session was interrupted
-    await clickResumeIfPresent();
+  async function fixTS(item){
+    const el=[...item.querySelectorAll('[data-baseweb="typo-labelxsmall"]')].find(e=>/\d{2}:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}:\d{2}/.test(e.textContent));
+    if(!el) return;
+    const m=el.textContent.match(/(\d{2}:\d{2}:\d{2})\s*-\s*(\d{2}:\d{2}:\d{2})/);
+    if(!m||m[1]!==m[2]) return;
+    const[h,min,sec]=m[2].split(':').map(Number);let ns=sec+1,nm=min,nh=h;
+    if(ns>=60){ns=0;nm++;}if(nm>=60){nm=0;nh++;}
+    const nEnd=[nh,nm,ns].map(v=>String(v).padStart(2,'0')).join(':');
+    for(const inp of item.querySelectorAll('input[type="text"],input:not([type])')){
+      if(inp.value===m[2]){
+        const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
+        s.call(inp,nEnd);inp.dispatchEvent(new Event('input',{bubbles:true}));inp.dispatchEvent(new Event('change',{bubbles:true}));await sleep(200);return;
+      }
+    }
+  }
 
-    // 1. Scroll to item
-    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  function readDur(){
+    for(const el of document.querySelectorAll('[data-baseweb="typo-labelsmall"]')){
+      const m=el.textContent.match(/[\d:]+\s*\/\s*([\d:]+)/);if(m) return m[1].trim();
+    }
+    return null;
+  }
+  function durToMs(str){const p=str.split(':').map(Number);if(p.length!==3)return 0;if(p[2]>59)return(p[0]*60+p[1]+p[2]/100)*1000;return(p[0]*3600+p[1]*60+p[2])*1000;}
+
+  function startTimer(ms,onDone){
+    if(_submitTimer) clearInterval(_submitTimer);
+    const dl=Date.now()+ms;
+    _submitTimer=setInterval(async()=>{
+      await clickResume();
+      if(Date.now()>=dl){
+        clearInterval(_submitTimer);_submitTimer=null;
+        const btn=document.querySelector('button[aria-label="Submit Task"]');
+        if(btn) btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+        onDone();
+      }
+    },20000);
+  }
+
+  async function processItem(item,cfg,i,tot,notify){
+    await clickResume();
+    item.scrollIntoView({behavior:'smooth',block:'center'});
     await sleep(400);
-
-    // 2. Read transcription spans BEFORE clicking Edit
-    const p = getTranscriptionP(item);
-    const { words, plainText, taggedText, hasFrench } = analyzeSpans(p);
-
-    if (!plainText) {
-      port.postMessage({ type: 'WARN', text: 'Item ' + (i + 1) + ': transcription vide, ignore.' });
-      port.postMessage({ type: 'PROGRESS', cur: i + 1, tot });
-      return;
-    }
-
-    // 3. Click Edit to enter edit mode
-    if (!clickEditBtn(item)) {
-      port.postMessage({ type: 'WARN', text: 'Item ' + (i + 1) + ': bouton Edit introuvable.' });
-      port.postMessage({ type: 'PROGRESS', cur: i + 1, tot });
-      return;
-    }
-
-    // 4. Wait for edit mode; poll until Primary Type trigger is present (max 3s)
+    const p=getTrP(item),{words,plainText,taggedText,hasFrench}=analyzeSpans(p);
+    if(!plainText){notify('progress',i+1,tot);return;}
+    if(!clickEdit(item)){notify('progress',i+1,tot);return;}
     await sleep(500);
-    for (let w = 0; w < 15 && !findDropdownByLabel('Primary Type', item); w++) await sleep(200);
-
-    // 5. Fill 4 dropdowns in edit mode (triggers confirmed as [data-baseweb="tag"][role="button"])
-    //    Scope search to this item; re-scroll after each pick.
-    await fillDropdowns(hasFrench, item, item);
-
-    // 6. Fill Transliteration: French words translated to Arabic, digits to Arabic words
-    const transliterationField = await findByPlaceholder('transliteration', 5000);
-    if (transliterationField) {
-      const transliterationText = await buildTransliterationText(words);
-      setFieldValue(transliterationField, transliterationText);
-      transliterationField.setAttribute('dir', 'rtl');
-      transliterationField.style.direction   = 'rtl';
-      transliterationField.style.textAlign   = 'right';
-      transliterationField.style.unicodeBidi = 'embed';
+    for(let w=0;w<15&&!findDD('Primary Type',item);w++) await sleep(200);
+    await fixTS(item);
+    await fillDDs(hasFrench,item,item);
+    const tf=await findByPH('transliteration',5000);
+    if(tf){
+      setField(tf,await buildTransliterationText(words));
+      tf.setAttribute('dir','rtl');tf.style.direction='rtl';tf.style.textAlign='right';tf.style.unicodeBidi='embed';
       await sleep(300);
-    } else {
-      port.postMessage({ type: 'WARN', text: 'Item ' + (i + 1) + ': champ Transliteration introuvable.' });
     }
-
-    // 7. If French detected, write tagged text into Transcription textarea
-    if (hasFrench) {
-      const allTA = document.querySelectorAll('textarea');
-      for (const ta of allTA) {
-        if (ta !== transliterationField) {
-          setReactTextarea(ta, taggedText);
-          await sleep(200);
-          break;
-        }
+    if(hasFrench){
+      for(const ta of document.querySelectorAll('textarea')){
+        if(ta!==tf){setReactTA(ta,taggedText);await sleep(200);break;}
       }
     }
-
-    // 8. Save
-    if (!(await clickSaveChanges())) {
-      port.postMessage({ type: 'WARN', text: 'Item ' + (i + 1) + ': bouton Save introuvable.' });
-    }
-
-    port.postMessage({ type: 'PROGRESS', cur: i + 1, tot });
-    await sleep(cfg.delay || 700);
+    await save();
+    notify('progress',i+1,tot);
+    await sleep(cfg.delay||700);
   }
 
-  // Main loop
-  async function run(cfg, port) {
-    const list = document.querySelector('[data-testid="annotation-list"]');
-    if (!list) {
-      port.postMessage({ type: 'ERROR', text: 'Liste introuvable.' }); return;
-    }
-    const items = [...list.querySelectorAll('[data-testid^="annotation-list-item-"]')];
-    const tot = items.length;
-    if (!tot) {
-      port.postMessage({ type: 'ERROR', text: 'Aucun item trouve.' }); return;
-    }
-
-    for (let i = 0; i < items.length; i++) {
-      if (stop) { port.postMessage({ type: 'STOP', cur: i, tot }); return; }
-      await processItem(items[i], cfg, i, tot, port);
-    }
-
-    port.postMessage({ type: 'DONE', tot });
-  }
-
-  chrome.runtime.onConnect.addListener(port => {
-    if (port.name !== 'annot-fill') return;
-    port.onMessage.addListener(async msg => {
-      if (msg.type === 'START') {
-        stop = false;
-        try { await run(msg.cfg, port); }
-        catch (e) { port.postMessage({ type: 'ERROR', text: e.message }); }
+  async function resolveRemainingItems(notify){
+    const remBtn=document.querySelector('button[aria-label="Remaining items"]');
+    if(!remBtn){notify('error','Bouton Remaining items introuvable.');return;}
+    const badge=remBtn.querySelector('[data-baseweb="notification-badge"]');
+    const total=parseInt(badge?.textContent||'0',10);
+    if(total<=0){notify('error','Aucun remaining item (badge = 0).');return;}
+    click(remBtn);
+    await sleep(800);
+    let drawer=document.getElementById('modernization-side-drawer');
+    if(!drawer){notify('error','Drawer introuvable.');return;}
+    let done=0,rounds=0;
+    while(rounds++<50){
+      if(stop) break;
+      const confirmRead=document.querySelector('button[aria-label="Confirm Read"]');
+      if(confirmRead){click(confirmRead);done=0;rounds=0;await sleep(800);continue;}
+      const expandBtns=[...drawer.querySelectorAll('[data-testid="expand-button"]')];
+      if(!expandBtns.length) break;
+      const btn=expandBtns[0];
+      click(btn);
+      await sleep(600);
+      const accepts=[...drawer.querySelectorAll('[data-testid="accept-button"]')];
+      for(const ab of accepts){
+        if(stop) return;
+        click(ab);done++;
+        uiSt(done+' / ~'+total+' accept\xe9s');
+        await sleep(400);
       }
-      if (msg.type === 'STOP') stop = true;
-    });
+      await sleep(300);
+    }
+    notify('done',done);
+  }
+
+  async function run(cfg,notify){
+    await clickResume();
+    const durStr=readDur();
+    if(durStr){
+      const ms=durToMs(durStr)*17;
+      notify('timer',Math.round(ms/60000),durStr);
+      startTimer(ms,()=>notify('submit'));
+    }
+    const list=document.querySelector('[data-testid="annotation-list"]');
+    if(!list){notify('error','Liste introuvable.');return;}
+    const items=[...list.querySelectorAll('[data-testid^="annotation-list-item-"]')];
+    const tot=items.length;
+    if(!tot){notify('error','Aucun item trouv\xe9.');return;}
+    for(let i=0;i<items.length;i++){
+      if(stop){notify('stopped');return;}
+      await processItem(items[i],cfg,i,tot,notify);
+    }
+    notify('done',tot);
+  }
+
+  // Floating panel
+  const panel=document.createElement('div');
+  panel.id='__AF_panel';
+  Object.assign(panel.style,{position:'fixed',top:'20px',right:'20px',width:'262px',background:'#0f0f1a',border:'1px solid #2d2d6b',borderRadius:'10px',padding:'13px',color:'#e2e8f0',fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",fontSize:'12px',zIndex:'2147483647',boxShadow:'0 8px 32px rgba(0,0,0,.6)',userSelect:'none'});
+
+  panel.innerHTML=`<div id="__AF_drag" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #2d2d6b;cursor:grab;"><span style="font-size:10px;font-weight:700;color:#a78bfa;letter-spacing:1px;">&#9776; ANNOTATION AUTO-FILL</span><button id="__AF_x" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;line-height:1;padding:0 2px;">&times;</button></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><label style="font-size:10px;color:#94a3b8;font-weight:700;white-space:nowrap;">DÉLAI ms</label><input id="__AF_delay" type="number" value="700" min="200" max="5000" step="100" style="width:70px;padding:4px 6px;background:#1a1a2e;border:1px solid #2d2d6b;border-radius:4px;color:#e2e8f0;font-size:11px;"></div><div style="display:flex;gap:8px;margin-bottom:8px;"><button id="__AF_go" style="flex:1;padding:8px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9654; Start</button><button id="__AF_stp" disabled style="flex:1;padding:8px;background:#1f2937;color:#6b7280;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9632; Stop</button></div><div style="margin-bottom:10px;"><button id="__AF_rem" style="width:100%;padding:7px;background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9888; Remaining Items</button></div><div id="__AF_bw" style="height:5px;background:#1a1a2e;border-radius:3px;overflow:hidden;margin-bottom:7px;display:none;"><div id="__AF_b" style="height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:3px;transition:width .3s;"></div></div><div id="__AF_st" style="text-align:center;font-size:11px;color:#94a3b8;">Pr\xeat</div>`;
+
+  document.body.appendChild(panel);
+  const stEl=panel.querySelector('#__AF_st'),barEl=panel.querySelector('#__AF_b'),bwEl=panel.querySelector('#__AF_bw'),goBtn=panel.querySelector('#__AF_go'),stpBtn=panel.querySelector('#__AF_stp');
+
+  const uiSt=t=>stEl.textContent=t;
+  function uiRun(on){goBtn.disabled=on;stpBtn.disabled=!on;stpBtn.style.background=on?'#dc2626':'#1f2937';stpBtn.style.color=on?'#fff':'#6b7280';}
+  function uiProg(c,t){bwEl.style.display='block';barEl.style.width=(t?(c/t)*100:0)+'%';uiSt(c+' / '+t);}
+  function notify(type,a,b){
+    if(type==='progress') uiProg(a,b);
+    else if(type==='timer')   uiSt('⏱ '+a+' min ('+b+' \xd7 17)');
+    else if(type==='submit')  {uiSt('Submit Task ✓');uiRun(false);}
+    else if(type==='error')   {uiSt('Erreur: '+a);uiRun(false);}
+    else if(type==='done')    {uiProg(a,a);uiSt('Termin\xe9 ✓');uiRun(false);}
+    else if(type==='stopped') {uiSt('Arr\xeat\xe9');uiRun(false);}
+  }
+
+  goBtn.addEventListener('click',async()=>{
+    const delay=parseInt(panel.querySelector('#__AF_delay').value)||700;
+    uiRun(true);uiSt('En cours…');bwEl.style.display='none';barEl.style.width='0';stop=false;
+    try{await run({delay},notify);}catch(e){uiSt('Erreur: '+e.message);uiRun(false);}
   });
-}
+  stpBtn.addEventListener('click',()=>{stop=true;if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}uiSt('Arr\xeat en cours…');});
+  panel.querySelector('#__AF_rem').addEventListener('click',async()=>{
+    stop=false;uiRun(true);uiSt('Remaining items…');
+    try{await resolveRemainingItems(notify);}catch(e){uiSt('Erreur: '+e.message);uiRun(false);}
+  });
+  panel.querySelector('#__AF_x').addEventListener('click',()=>{stop=true;if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}panel.style.display='none';});
+
+  // Drag
+  const dh=panel.querySelector('#__AF_drag');
+  let dg=false,ox=0,oy=0;
+  dh.addEventListener('mousedown',e=>{if(e.target.id==='__AF_x')return;dg=true;const r=panel.getBoundingClientRect();ox=e.clientX-r.left;oy=e.clientY-r.top;dh.style.cursor='grabbing';e.preventDefault();});
+  document.addEventListener('mousemove',e=>{if(!dg)return;const x=Math.max(0,Math.min(window.innerWidth-panel.offsetWidth,e.clientX-ox)),y=Math.max(0,Math.min(window.innerHeight-panel.offsetHeight,e.clientY-oy));panel.style.left=x+'px';panel.style.top=y+'px';panel.style.right='auto';panel.style.bottom='auto';});
+  document.addEventListener('mouseup',()=>{dg=false;dh.style.cursor='grab';});
+
+})();
