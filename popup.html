@@ -1,37 +1,13 @@
 <!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Annotation Auto-Fill</title>
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body>
-  <div class="container">
-    <h2>Annotation Auto-Fill</h2>
-
-    <div class="field row">
-      <label>Délai entre items (ms)</label>
-      <input type="number" id="delay" value="700" min="200" max="5000" step="100">
-    </div>
-
-    <div class="info">
-      <div>1. Lit la transcription de chaque item</div>
-      <div>2. Clique <b>Edit</b></div>
-      <div>3. Ajoute <b>&lt;/lang:French&gt;</b> après les mots français</div>
-      <div>4. Copie le texte dans <b>Transliteration</b></div>
-      <div>5. Clique <b>Save changes</b></div>
-    </div>
-
-    <div class="buttons">
-      <button id="startBtn">▶ Lancer</button>
-      <button id="stopBtn" disabled>■ Arrêter</button>
-    </div>
-
-    <div id="progressWrap" class="hidden">
-      <div class="bar"><div id="barFill"></div></div>
-      <div id="statusText">0 / 0</div>
-    </div>
-  </div>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="width:190px;padding:14px;background:#0f0f1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <button id="btn" style="width:100%;padding:10px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
+    Ouvrir l'interface
+  </button>
+  <p style="margin:8px 0 0;font-size:10px;color:#475569;text-align:center;">
+    L'interface apparaît sur la page et peut être déplacée librement.
+  </p>
   <script src="popup.js"></script>
 </body>
 </html>

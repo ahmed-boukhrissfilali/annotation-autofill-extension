@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:PATH += \";C:\\\\Program Files\\\\GitHub CLI\"; Set-Location \"d:\\\\exteuotn chrom v2\"; gh repo create annotation-autofill-extension --public --description \"Chrome extension to auto-fill annotation items: detects French, adds lang tags, copies to Transliteration\" --source . --remote origin --push)",
+      "Bash(python \"C:/Users/ahmed/AppData/Local/Temp/claude/d--exteuotn-chrom-v2/44509600-ef70-4440-9dfd-c27ce087b86b/scratchpad/newcontent.py\")",
+      "Bash(powershell -Command \"Compress-Archive -Path background.js,content.js,manifest.json,popup.html,popup.js -DestinationPath annotation-autofill-v3.0.zip -Force\")",
+      "Bash(gh release *)",
+      "PowerShell(Get-Command gh -ErrorAction SilentlyContinue)",
+      "PowerShell($env:GITHUB_TOKEN; $env:GH_TOKEN)",
+      "PowerShell($env:GITHUB_TOKEN)",
+      "PowerShell($env:GH_TOKEN)"
+    ]
+  }
+}
