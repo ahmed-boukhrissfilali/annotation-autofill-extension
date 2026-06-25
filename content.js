@@ -2,9 +2,10 @@
   const _ex = document.getElementById('__AF_panel');
   if (_ex) { _ex.style.display = ''; return; }
 
-  let stop = false, _submitTimer = null;
+  let stop = false, _submitTimer = null, _countdownTimer = null;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  /* ---- Arabic number words ---- */
   function numberToArabicWords(n) {
     if (n===0) return 'صفر';
     const ones=['',' واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'];
@@ -18,6 +19,7 @@
   }
   function convertDigitsToWords(t){return t.replace(/\d+/g,m=>numberToArabicWords(parseInt(m,10)));}
 
+  /* ---- Translation ---- */
   async function translateFrToAr(text) {
     return new Promise(resolve => {
       chrome.runtime.sendMessage({type:'TRANSLATE_FR_AR',text}, res => {
@@ -41,6 +43,7 @@
     return parts.join(' ').trim();
   }
 
+  /* ---- DOM helpers ---- */
   function click(el){['mousedown','mouseup','click'].forEach(t=>el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));}
   function esc(){document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));}
   function setReactTA(el,value){
@@ -163,21 +166,52 @@
     }
   }
 
+  /* ---- Duration / Timer ---- */
   function readDur(){
     for(const el of document.querySelectorAll('[data-baseweb="typo-labelsmall"]')){
-      const m=el.textContent.match(/[\d:]+\s*\/\s*([\d:]+)/);if(m) return m[1].trim();
+      const m=el.textContent.match(/[\d:]+\s*\/\s*([\d:]+)/);
+      if(m) return m[1].trim();
     }
     return null;
   }
-  function durToMs(str){const p=str.split(':').map(Number);if(p.length!==3)return 0;if(p[2]>59)return(p[0]*60+p[1]+p[2]/100)*1000;return(p[0]*3600+p[1]*60+p[2])*1000;}
+
+  function durToMs(str){
+    const p=str.split(':').map(Number);
+    if(p.length!==3) return 0;
+    if(p[2]>59) return (p[0]*60+p[1]+p[2]/100)*1000;
+    return (p[0]*3600+p[1]*60+p[2])*1000;
+  }
+
+  /* MM:SS:cs format (minutes : seconds : centiseconds) */
+  function fmtMs(ms){
+    if(ms<=0) return '00:00:00';
+    const totalSec=Math.floor(ms/1000);
+    const h=Math.floor(totalSec/3600);
+    const m=Math.floor((totalSec%3600)/60);
+    const s=totalSec%60;
+    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  }
 
   function startTimer(ms,onDone){
     if(_submitTimer) clearInterval(_submitTimer);
+    if(_countdownTimer) clearInterval(_countdownTimer);
     const dl=Date.now()+ms;
-    _submitTimer=setInterval(async()=>{
+    const cntEl=document.getElementById('__AF_cnt');
+    const cntW=document.getElementById('__AF_cntw');
+    if(cntW) cntW.style.display='block';
+    if(cntEl) cntEl.textContent=fmtMs(ms);
+    _countdownTimer=setInterval(function(){
+      const left=dl-Date.now();
+      if(cntEl) cntEl.textContent=fmtMs(left>0?left:0);
+      if(left<=0){clearInterval(_countdownTimer);_countdownTimer=null;}
+    },100);
+    _submitTimer=setInterval(async function(){
       await clickResume();
       if(Date.now()>=dl){
         clearInterval(_submitTimer);_submitTimer=null;
+        clearInterval(_countdownTimer);_countdownTimer=null;
+        if(cntEl) cntEl.textContent='00:00:00';
+        if(cntW) cntW.style.display='none';
         const btn=document.querySelector('button[aria-label="Submit Task"]');
         if(btn) btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
         onDone();
@@ -185,11 +219,22 @@
     },20000);
   }
 
+  function stopAllTimers(){
+    if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}
+    if(_countdownTimer){clearInterval(_countdownTimer);_countdownTimer=null;}
+    const cntW=document.getElementById('__AF_cntw');
+    const cntEl=document.getElementById('__AF_cnt');
+    if(cntW) cntW.style.display='none';
+    if(cntEl) cntEl.textContent='00:00:00';
+  }
+
+  /* ---- Process one annotation item ---- */
   async function processItem(item,cfg,i,tot,notify){
     await clickResume();
     item.scrollIntoView({behavior:'smooth',block:'center'});
     await sleep(400);
-    const p=getTrP(item),{words,plainText,taggedText,hasFrench}=analyzeSpans(p);
+    const p=getTrP(item);
+    const {words,plainText,taggedText,hasFrench}=analyzeSpans(p);
     if(!plainText){notify('progress',i+1,tot);return;}
     if(!clickEdit(item)){notify('progress',i+1,tot);return;}
     await sleep(500);
@@ -212,51 +257,53 @@
     await sleep(cfg.delay||700);
   }
 
-  async function resolveRemainingItems(notify){
+  /* ---- Resolve remaining items ---- */
+  async function resolveRemainingItems(uiNotify){
     const remBtn=document.querySelector('button[aria-label="Remaining items"]');
-    if(!remBtn){notify('error','Bouton Remaining items introuvable.');return;}
+    if(!remBtn){uiNotify('error','Bouton Remaining items introuvable.');return;}
     const badge=remBtn.querySelector('[data-baseweb="notification-badge"]');
-    const total=parseInt(badge?.textContent||'0',10);
-    if(total<=0){notify('error','Aucun remaining item (badge = 0).');return;}
+    const total=parseInt(badge?badge.textContent:'0',10);
+    if(total<=0){uiNotify('error','Aucun remaining item (badge = 0).');return;}
     click(remBtn);
     await sleep(800);
-    let drawer=document.getElementById('modernization-side-drawer');
-    if(!drawer){notify('error','Drawer introuvable.');return;}
+    const drawer=document.getElementById('modernization-side-drawer');
+    if(!drawer){uiNotify('error','Drawer introuvable.');return;}
     let done=0,rounds=0;
-    while(rounds++<50){
+    while(rounds++<100){
       if(stop) break;
       const confirmRead=document.querySelector('button[aria-label="Confirm Read"]');
       if(confirmRead){click(confirmRead);done=0;rounds=0;await sleep(800);continue;}
       const expandBtns=[...drawer.querySelectorAll('[data-testid="expand-button"]')];
       if(!expandBtns.length) break;
-      const btn=expandBtns[0];
-      click(btn);
+      click(expandBtns[0]);
       await sleep(600);
       const accepts=[...drawer.querySelectorAll('[data-testid="accept-button"]')];
       for(const ab of accepts){
         if(stop) return;
         click(ab);done++;
-        uiSt(done+' / ~'+total+' accept\xe9s');
+        const stEl=document.getElementById('__AF_st');
+        if(stEl) stEl.textContent=done+' / ~'+total+' acceptés';
         await sleep(400);
       }
       await sleep(300);
     }
-    notify('done',done);
+    uiNotify('done',done);
   }
 
+  /* ---- Main run loop ---- */
   async function run(cfg,notify){
     await clickResume();
     const durStr=readDur();
     if(durStr){
       const ms=durToMs(durStr)*17;
       notify('timer',Math.round(ms/60000),durStr);
-      startTimer(ms,()=>notify('submit'));
+      startTimer(ms,function(){notify('submit');});
     }
     const list=document.querySelector('[data-testid="annotation-list"]');
     if(!list){notify('error','Liste introuvable.');return;}
     const items=[...list.querySelectorAll('[data-testid^="annotation-list-item-"]')];
     const tot=items.length;
-    if(!tot){notify('error','Aucun item trouv\xe9.');return;}
+    if(!tot){notify('error','Aucun item trouvé.');return;}
     for(let i=0;i<items.length;i++){
       if(stop){notify('stopped');return;}
       await processItem(items[i],cfg,i,tot,notify);
@@ -264,57 +311,156 @@
     notify('done',tot);
   }
 
-  // Floating panel
+  /* ================================================================
+     FLOATING PANEL
+  ================================================================ */
   const panel=document.createElement('div');
   panel.id='__AF_panel';
-  Object.assign(panel.style,{position:'fixed',top:'20px',right:'20px',width:'262px',background:'#0f0f1a',border:'1px solid #2d2d6b',borderRadius:'10px',padding:'13px',color:'#e2e8f0',fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",fontSize:'12px',zIndex:'2147483647',boxShadow:'0 8px 32px rgba(0,0,0,.6)',userSelect:'none'});
+  Object.assign(panel.style,{
+    position:'fixed',top:'20px',right:'20px',width:'270px',
+    background:'#0f0f1a',border:'1px solid #2d2d6b',borderRadius:'10px',
+    padding:'13px',color:'#e2e8f0',
+    fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+    fontSize:'12px',zIndex:'2147483647',boxShadow:'0 8px 32px rgba(0,0,0,.6)',
+    userSelect:'none'
+  });
 
-  panel.innerHTML=`<div id="__AF_drag" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #2d2d6b;cursor:grab;"><span style="font-size:10px;font-weight:700;color:#a78bfa;letter-spacing:1px;">&#9776; ANNOTATION AUTO-FILL</span><button id="__AF_x" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;line-height:1;padding:0 2px;">&times;</button></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><label style="font-size:10px;color:#94a3b8;font-weight:700;white-space:nowrap;">DÉLAI ms</label><input id="__AF_delay" type="number" value="700" min="200" max="5000" step="100" style="width:70px;padding:4px 6px;background:#1a1a2e;border:1px solid #2d2d6b;border-radius:4px;color:#e2e8f0;font-size:11px;"></div><div style="display:flex;gap:8px;margin-bottom:8px;"><button id="__AF_go" style="flex:1;padding:8px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9654; Start</button><button id="__AF_stp" disabled style="flex:1;padding:8px;background:#1f2937;color:#6b7280;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9632; Stop</button></div><div style="margin-bottom:10px;"><button id="__AF_rem" style="width:100%;padding:7px;background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9888; Remaining Items</button></div><div id="__AF_bw" style="height:5px;background:#1a1a2e;border-radius:3px;overflow:hidden;margin-bottom:7px;display:none;"><div id="__AF_b" style="height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:3px;transition:width .3s;"></div></div><div id="__AF_st" style="text-align:center;font-size:11px;color:#94a3b8;">Pr\xeat</div>`;
+  panel.innerHTML=[
+    /* drag bar */
+    '<div id="__AF_drag" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #2d2d6b;cursor:grab;">',
+      '<span style="font-size:10px;font-weight:700;color:#a78bfa;letter-spacing:1px;">&#9776; ANNOTATION AUTO-FILL</span>',
+      '<button id="__AF_x" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;line-height:1;padding:0 2px;">&times;</button>',
+    '</div>',
+    /* delay input */
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">',
+      '<label style="font-size:10px;color:#94a3b8;font-weight:700;white-space:nowrap;">DÉLAI ms</label>',
+      '<input id="__AF_delay" type="number" value="700" min="200" max="5000" step="100" style="width:70px;padding:4px 6px;background:#1a1a2e;border:1px solid #2d2d6b;border-radius:4px;color:#e2e8f0;font-size:11px;">',
+    '</div>',
+    /* start / stop */
+    '<div style="display:flex;gap:8px;margin-bottom:8px;">',
+      '<button id="__AF_go" style="flex:1;padding:8px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9654; Start</button>',
+      '<button id="__AF_stp" disabled style="flex:1;padding:8px;background:#1f2937;color:#6b7280;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9632; Stop</button>',
+    '</div>',
+    /* remaining items */
+    '<div style="margin-bottom:10px;">',
+      '<button id="__AF_rem" style="width:100%;padding:7px;background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9888; Remaining Items</button>',
+    '</div>',
+    /* countdown timer — hidden until timer starts */
+    '<div id="__AF_cntw" style="display:none;text-align:center;background:#0a0a14;border:1px solid #2d2d6b;border-radius:6px;padding:6px 4px;margin-bottom:8px;">',
+      '<div style="font-size:9px;color:#64748b;font-weight:700;letter-spacing:1px;margin-bottom:2px;">TEMPS RESTANT (hh:mm:ss)</div>',
+      '<div id="__AF_cnt" style="font-size:26px;font-weight:700;color:#a78bfa;letter-spacing:3px;font-family:monospace;">00:00:00</div>',
+    '</div>',
+    /* progress bar */
+    '<div id="__AF_bw" style="height:5px;background:#1a1a2e;border-radius:3px;overflow:hidden;margin-bottom:7px;display:none;">',
+      '<div id="__AF_b" style="height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:3px;transition:width .3s;"></div>',
+    '</div>',
+    /* status text */
+    '<div id="__AF_st" style="text-align:center;font-size:11px;color:#94a3b8;">Prêt</div>'
+  ].join('');
 
   document.body.appendChild(panel);
-  const stEl=panel.querySelector('#__AF_st'),barEl=panel.querySelector('#__AF_b'),bwEl=panel.querySelector('#__AF_bw'),goBtn=panel.querySelector('#__AF_go'),stpBtn=panel.querySelector('#__AF_stp');
 
-  const uiSt=t=>stEl.textContent=t;
-  function uiRun(on){goBtn.disabled=on;stpBtn.disabled=!on;stpBtn.style.background=on?'#dc2626':'#1f2937';stpBtn.style.color=on?'#fff':'#6b7280';}
-  function uiProg(c,t){bwEl.style.display='block';barEl.style.width=(t?(c/t)*100:0)+'%';uiSt(c+' / '+t);}
-  function notify(type,a,b){
-    if(type==='progress') uiProg(a,b);
-    else if(type==='timer')   uiSt('⏱ '+a+' min ('+b+' \xd7 17)');
-    else if(type==='submit')  {uiSt('Submit Task ✓');uiRun(false);}
-    else if(type==='error')   {uiSt('Erreur: '+a);uiRun(false);}
-    else if(type==='done')    {uiProg(a,a);uiSt('Termin\xe9 ✓');uiRun(false);}
-    else if(type==='stopped') {uiSt('Arr\xeat\xe9');uiRun(false);}
+  const stEl  = panel.querySelector('#__AF_st');
+  const barEl = panel.querySelector('#__AF_b');
+  const bwEl  = panel.querySelector('#__AF_bw');
+  const goBtn = panel.querySelector('#__AF_go');
+  const stpBtn= panel.querySelector('#__AF_stp');
+
+  const uiSt = t => stEl.textContent = t;
+  function uiRun(on){
+    goBtn.disabled=on;
+    stpBtn.disabled=!on;
+    stpBtn.style.background=on?'#dc2626':'#1f2937';
+    stpBtn.style.color=on?'#fff':'#6b7280';
+  }
+  function uiProg(c,t){
+    bwEl.style.display='block';
+    barEl.style.width=(t?(c/t)*100:0)+'%';
+    uiSt(c+' / '+t);
   }
 
-  goBtn.addEventListener('click',async()=>{
+  function notify(type,a,b){
+    if(type==='progress') uiProg(a,b);
+    else if(type==='timer')   uiSt('⏱ '+a+' min ('+b+' × 17)');
+    else if(type==='submit')  { stopAllTimers(); uiSt('Submit Task ✓'); uiRun(false); }
+    else if(type==='error')   { uiSt('Erreur: '+a); uiRun(false); }
+    else if(type==='done')    { uiProg(a,a); uiSt('Terminé ✓'); uiRun(false); }
+    else if(type==='stopped') { uiSt('Arrêté'); uiRun(false); }
+  }
+
+  /* Start button — restarts automatically after Submit */
+  goBtn.addEventListener('click', async function(){
     const delay=parseInt(panel.querySelector('#__AF_delay').value)||700;
     stop=false;
     const cfg={delay};
     async function doRun(){
-      uiRun(true);uiSt('En cours…');bwEl.style.display='none';barEl.style.width='0';
-      try{
-        await run(cfg,function(type,a,b){
+      stopAllTimers();
+      uiRun(true);
+      uiSt('En cours…');
+      bwEl.style.display='none';
+      barEl.style.width='0';
+      try {
+        await run(cfg, function(type,a,b){
           if(type==='submit'){
-            uiSt('Submit ✓ – Red\xe9marrage…');
-            setTimeout(async()=>{if(!stop)await doRun();else{uiSt('Arr\xeat\xe9');uiRun(false);}},5000);
-          } else notify(type,a,b);
+            stopAllTimers();
+            uiSt('Submit ✓ – Redémarrage…');
+            setTimeout(async function(){
+              if(!stop) await doRun();
+              else { uiSt('Arrêté'); uiRun(false); }
+            }, 5000);
+          } else {
+            notify(type,a,b);
+          }
         });
-      }catch(e){uiSt('Erreur: '+e.message);uiRun(false);}
+      } catch(e) {
+        uiSt('Erreur: '+e.message);
+        uiRun(false);
+      }
     }
     await doRun();
   });
-  stpBtn.addEventListener('click',()=>{stop=true;if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}uiSt('Arr\xeat en cours…');});
-  panel.querySelector('#__AF_rem').addEventListener('click',async()=>{
-    stop=false;uiRun(true);uiSt('Remaining items…');
-    try{await resolveRemainingItems(notify);}catch(e){uiSt('Erreur: '+e.message);uiRun(false);}
-  });
-  panel.querySelector('#__AF_x').addEventListener('click',()=>{stop=true;if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}panel.style.display='none';});
 
-  // Drag
+  /* Stop button */
+  stpBtn.addEventListener('click', function(){
+    stop=true;
+    stopAllTimers();
+    uiSt('Arrêt en cours…');
+  });
+
+  /* Remaining Items button */
+  panel.querySelector('#__AF_rem').addEventListener('click', async function(){
+    stop=false;
+    uiRun(true);
+    uiSt('Remaining items…');
+    try { await resolveRemainingItems(notify); }
+    catch(e) { uiSt('Erreur: '+e.message); uiRun(false); }
+  });
+
+  /* Close button */
+  panel.querySelector('#__AF_x').addEventListener('click', function(){
+    stop=true;
+    stopAllTimers();
+    panel.style.display='none';
+  });
+
+  /* Drag */
   const dh=panel.querySelector('#__AF_drag');
   let dg=false,ox=0,oy=0;
-  dh.addEventListener('mousedown',e=>{if(e.target.id==='__AF_x')return;dg=true;const r=panel.getBoundingClientRect();ox=e.clientX-r.left;oy=e.clientY-r.top;dh.style.cursor='grabbing';e.preventDefault();});
-  document.addEventListener('mousemove',e=>{if(!dg)return;const x=Math.max(0,Math.min(window.innerWidth-panel.offsetWidth,e.clientX-ox)),y=Math.max(0,Math.min(window.innerHeight-panel.offsetHeight,e.clientY-oy));panel.style.left=x+'px';panel.style.top=y+'px';panel.style.right='auto';panel.style.bottom='auto';});
-  document.addEventListener('mouseup',()=>{dg=false;dh.style.cursor='grab';});
+  dh.addEventListener('mousedown',function(e){
+    if(e.target.id==='__AF_x') return;
+    dg=true;
+    const r=panel.getBoundingClientRect();
+    ox=e.clientX-r.left; oy=e.clientY-r.top;
+    dh.style.cursor='grabbing';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',function(e){
+    if(!dg) return;
+    const x=Math.max(0,Math.min(window.innerWidth-panel.offsetWidth,e.clientX-ox));
+    const y=Math.max(0,Math.min(window.innerHeight-panel.offsetHeight,e.clientY-oy));
+    panel.style.left=x+'px'; panel.style.top=y+'px';
+    panel.style.right='auto'; panel.style.bottom='auto';
+  });
+  document.addEventListener('mouseup',function(){dg=false;dh.style.cursor='grab';});
 
 })();
