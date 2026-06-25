@@ -288,8 +288,20 @@
 
   goBtn.addEventListener('click',async()=>{
     const delay=parseInt(panel.querySelector('#__AF_delay').value)||700;
-    uiRun(true);uiSt('En cours…');bwEl.style.display='none';barEl.style.width='0';stop=false;
-    try{await run({delay},notify);}catch(e){uiSt('Erreur: '+e.message);uiRun(false);}
+    stop=false;
+    const cfg={delay};
+    async function doRun(){
+      uiRun(true);uiSt('En cours…');bwEl.style.display='none';barEl.style.width='0';
+      try{
+        await run(cfg,function(type,a,b){
+          if(type==='submit'){
+            uiSt('Submit ✓ – Red\xe9marrage…');
+            setTimeout(async()=>{if(!stop)await doRun();else{uiSt('Arr\xeat\xe9');uiRun(false);}},5000);
+          } else notify(type,a,b);
+        });
+      }catch(e){uiSt('Erreur: '+e.message);uiRun(false);}
+    }
+    await doRun();
   });
   stpBtn.addEventListener('click',()=>{stop=true;if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}uiSt('Arr\xeat en cours…');});
   panel.querySelector('#__AF_rem').addEventListener('click',async()=>{
