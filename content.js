@@ -19,7 +19,43 @@
   }
   function convertDigitsToWords(t){return t.replace(/\d+/g,m=>numberToArabicWords(parseInt(m,10)));}
 
-  /* ---- Translation ---- */
+  /* ---- Phonetic transliteration FR → AR ---- */
+  function transliterateFrToAr(text) {
+    // Rules ordered longest-first to avoid partial matches
+    const rules = [
+      // Multi-letter French sequences → Arabic phonetic
+      ['tion',  'سيون'], ['sion',  'زيون'], ['ille',  'إي'],
+      ['eau',   'و'],    ['ain',   'إن'],   ['ein',   'إن'],
+      ['oin',   'وإن'],  ['ion',   'يون'],  ['ieu',   'يو'],
+      ['oeu',   'و'],    ['oei',   'وي'],   ['gn',    'ني'],
+      ['ch',    'ش'],    ['ph',    'ف'],    ['qu',    'ك'],
+      ['th',    'ت'],    ['ck',    'ك'],    ['ou',    'و'],
+      ['oi',    'وا'],   ['ai',    'إي'],   ['ei',    'إي'],
+      ['au',    'و'],    ['eu',    'و'],    ['ae',    'إي'],
+      // Single letters
+      ['â', 'ا'], ['à', 'ا'], ['á', 'ا'], ['ä', 'ا'],
+      ['é', 'إي'], ['è', 'إي'], ['ê', 'إي'], ['ë', 'إي'],
+      ['î', 'ي'], ['ï', 'ي'], ['í', 'ي'],
+      ['ô', 'و'], ['ö', 'و'], ['ò', 'و'], ['ó', 'و'],
+      ['û', 'و'], ['ü', 'و'], ['ù', 'و'], ['ú', 'و'],
+      ['ç', 'س'],
+      ['a', 'ا'], ['b', 'ب'], ['c', 'ك'], ['d', 'د'],
+      ['e', 'إ'], ['f', 'ف'], ['g', 'غ'], ['h', ''],
+      ['i', 'ي'], ['j', 'ج'], ['k', 'ك'], ['l', 'ل'],
+      ['m', 'م'], ['n', 'ن'], ['o', 'و'], ['p', 'ب'],
+      ['q', 'ك'], ['r', 'ر'], ['s', 'س'], ['t', 'ت'],
+      ['u', 'و'], ['v', 'ڤ'], ['w', 'و'], ['x', 'كس'],
+      ['y', 'ي'], ['z', 'ز'],
+    ];
+    let result = text.toLowerCase();
+    for (const [fr, ar] of rules) {
+      result = result.split(fr).join(ar);
+    }
+    // Remove trailing silent letters that became empty
+    return result.replace(/\s+/g, ' ').trim();
+  }
+
+  /* ---- Translation (fallback via API) ---- */
   async function translateFrToAr(text) {
     return new Promise(resolve => {
       chrome.runtime.sendMessage({type:'TRANSLATE_FR_AR',text}, res => {
@@ -38,7 +74,8 @@
     const parts=[];
     for(const g of groups){
       const j=g.texts.join(' ');
-      parts.push(g.isFrench?await translateFrToAr(j):convertDigitsToWords(j));
+      // Use local phonetic transliteration (no API call needed)
+      parts.push(g.isFrench ? transliterateFrToAr(j) : convertDigitsToWords(j));
     }
     return parts.join(' ').trim();
   }
@@ -178,8 +215,8 @@
   function durToMs(str){
     const p=str.split(':').map(Number);
     if(p.length!==3) return 0;
-    if(p[2]>59) return (p[0]*60+p[1]+p[2]/100)*1000;
-    return (p[0]*3600+p[1]*60+p[2])*1000;
+    /* format MM:SS:CS — on utilise uniquement les minutes (p[0]) × 17 */
+    return p[0]*60*1000;
   }
 
   /* MM:SS:cs format (minutes : seconds : centiseconds) */
@@ -403,11 +440,37 @@
         await run(cfg, function(type,a,b){
           if(type==='submit'){
             stopAllTimers();
-            uiSt('Submit ✓ – Redémarrage…');
-            setTimeout(async function(){
-              if(!stop) await doRun();
-              else { uiSt('Arrêté'); uiRun(false); }
-            }, 5000);
+            uiSt('Submit ✓ – Attente Confirm Read…');
+            (async function waitConfirm(){
+              while(!stop){
+                const cr=document.querySelector('button[aria-label="Confirm Read"]');
+                if(cr){
+                  cr.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+                  uiSt('Confirm Read ✓ – Remaining Items…');
+                  await sleep(1500);
+                  if(stop){uiSt('Arrêté');uiRun(false);return;}
+                  /* 1. Remaining Items */
+                  try{await resolveRemainingItems(notify);}catch(e){}
+                  if(stop){uiSt('Arrêté');uiRun(false);return;}
+                  /* 2. Flash timer display 3× pour signaler nouveau cycle */
+                  const cntW=document.getElementById('__AF_cntw');
+                  const cntEl=document.getElementById('__AF_cnt');
+                  if(cntW&&cntEl){
+                    cntW.style.display='block';
+                    for(let i=0;i<3;i++){
+                      cntEl.style.opacity='0';await sleep(300);
+                      cntEl.style.opacity='1';await sleep(300);
+                    }
+                  }
+                  /* 3. Relancer le script */
+                  if(!stop) await doRun();
+                  else {uiSt('Arrêté');uiRun(false);}
+                  return;
+                }
+                await sleep(500);
+              }
+              uiSt('Arrêté'); uiRun(false);
+            })();
           } else {
             notify(type,a,b);
           }
