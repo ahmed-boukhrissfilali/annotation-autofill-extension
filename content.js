@@ -181,9 +181,23 @@
     return false;
   }
 
+  function findResumeBtn(){
+    return document.querySelector('button[aria-label="Resume"]')
+      ||document.querySelector('button[aria-label="resume"]')
+      ||[...document.querySelectorAll('button')].find(b=>/^resum/i.test(b.textContent.trim()));
+  }
+
   async function clickResume(){
-    const btn=document.querySelector('button[aria-label="Resume"]')||[...document.querySelectorAll('button')].find(b=>/^resum/i.test(b.textContent.trim()));
-    if(btn){btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));await sleep(800);return true;}
+    let btn=findResumeBtn();
+    if(!btn) return false;
+    for(let i=0;i<4;i++){
+      ['mousedown','mouseup','click'].forEach(t=>btn.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));
+      await sleep(700);
+      if(!findResumeBtn()) return true; // disappeared → success
+      btn=findResumeBtn();
+      if(!btn) return true;
+      await sleep(400);
+    }
     return false;
   }
 
@@ -233,6 +247,8 @@
     if(_submitTimer) clearInterval(_submitTimer);
     if(_countdownTimer) clearInterval(_countdownTimer);
     const dl=Date.now()+ms;
+    localStorage.setItem('__AF_deadline', String(dl));
+    localStorage.setItem('__AF_onDoneKey','submit');
     const cntEl=document.getElementById('__AF_cnt');
     const cntW=document.getElementById('__AF_cntw');
     if(cntW) cntW.style.display='block';
@@ -250,7 +266,7 @@
         if(cntEl) cntEl.textContent='00:00:00';
         if(cntW) cntW.style.display='none';
         const btn=document.querySelector('button[aria-label="Submit Task"]');
-        if(btn) btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+        if(btn) ['mousedown','mouseup','click'].forEach(t=>btn.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));
         onDone();
       }
     },20000);
@@ -259,6 +275,8 @@
   function stopAllTimers(){
     if(_submitTimer){clearInterval(_submitTimer);_submitTimer=null;}
     if(_countdownTimer){clearInterval(_countdownTimer);_countdownTimer=null;}
+    localStorage.removeItem('__AF_deadline');
+    localStorage.removeItem('__AF_onDoneKey');
     const cntW=document.getElementById('__AF_cntw');
     const cntEl=document.getElementById('__AF_cnt');
     if(cntW) cntW.style.display='none';
@@ -505,6 +523,35 @@
     stopAllTimers();
     panel.style.display='none';
   });
+
+  /* ── Restore timer after page refresh ── */
+  (async function restoreTimer(){
+    const saved=parseInt(localStorage.getItem('__AF_deadline')||'0',10);
+    if(!saved) return;
+    const remaining=saved-Date.now();
+    if(remaining<=0){localStorage.removeItem('__AF_deadline');localStorage.removeItem('__AF_onDoneKey');return;}
+    uiRun(true);
+    uiSt('⟳ Timer restauré: '+fmtMs(remaining));
+    startTimer(remaining,async function(){
+      uiSt('Submit ✓ – Attente Confirm Read…');
+      let g=0;
+      while(g++<240&&!stop){
+        const cr=document.querySelector('button[aria-label="Confirm Read"]');
+        if(cr){
+          ['mousedown','mouseup','click'].forEach(t=>cr.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));
+          uiSt('Confirm Read ✓ – Remaining Items…');
+          await sleep(1500);
+          if(!stop) try{await resolveRemainingItems(notify);}catch(e){}
+          uiSt('Terminé ✓');
+          uiRun(false);
+          return;
+        }
+        await sleep(500);
+      }
+      uiSt('Terminé');
+      uiRun(false);
+    });
+  })();
 
   /* Drag */
   const dh=panel.querySelector('#__AF_drag');
