@@ -85,9 +85,11 @@
   function esc(){document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));}
   function setReactTA(el,value){
     const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;
+    el.focus();
     s.call(el,value);
     el.dispatchEvent(new Event('input',{bubbles:true}));
     el.dispatchEvent(new Event('change',{bubbles:true}));
+    el.dispatchEvent(new FocusEvent('blur',{bubbles:true}));
   }
   function setField(el,value){
     if(el.tagName==='TEXTAREA') setReactTA(el,value);
@@ -173,12 +175,33 @@
     return false;
   }
 
-  async function save(){
-    for(const btn of document.querySelectorAll('button[data-baseweb="button"]')){
-      const t=btn.textContent.trim().toLowerCase();
-      if(t.includes('save')||t.includes('sauvegarder')){click(btn);await sleep(600);return true;}
+  function isDisabled(btn){return btn.disabled||btn.getAttribute('aria-disabled')==='true'||btn.getAttribute('data-disabled')==='true';}
+
+  function findBtnByText(...labels){
+    const btns=[...document.querySelectorAll('button[data-baseweb="button"]')];
+    for(const label of labels){
+      const found=btns.find(b=>b.textContent.trim().toLowerCase().includes(label));
+      if(found) return found;
+    }
+    return null;
+  }
+
+  async function clickWhenEnabled(finder,ms=8000){
+    const t0=Date.now();
+    while(Date.now()-t0<ms){
+      const btn=finder();
+      if(btn&&!isDisabled(btn)){click(btn);await sleep(600);return true;}
+      await sleep(250);
     }
     return false;
+  }
+
+  async function save(){
+    return clickWhenEnabled(()=>findBtnByText('save changes','save','sauvegarder'));
+  }
+
+  async function clickApprove(){
+    return clickWhenEnabled(()=>findBtnByText('approve'),5000);
   }
 
   function findResumeBtn(){
@@ -290,24 +313,31 @@
     await sleep(400);
     const p=getTrP(item);
     const {words,plainText,taggedText,hasFrench}=analyzeSpans(p);
-    if(!plainText){notify('progress',i+1,tot);return;}
     if(!clickEdit(item)){notify('progress',i+1,tot);return;}
     await sleep(500);
     for(let w=0;w<15&&!findDD('Primary Type',item);w++) await sleep(200);
     await fixTS(item);
-    await fillDDs(hasFrench,item,item);
     const tf=await findByPH('transliteration',5000);
-    if(tf){
-      setField(tf,await buildTransliterationText(words));
-      tf.setAttribute('dir','rtl');tf.style.direction='rtl';tf.style.textAlign='right';tf.style.unicodeBidi='embed';
-      await sleep(300);
-    }
-    if(hasFrench){
+    if(!plainText){
       for(const ta of document.querySelectorAll('textarea')){
-        if(ta!==tf){setReactTA(ta,taggedText);await sleep(200);break;}
+        if(ta!==tf){setReactTA(ta,'.');await sleep(200);break;}
+      }
+    }
+    await fillDDs(hasFrench,item,item);
+    if(plainText){
+      if(tf){
+        setField(tf,await buildTransliterationText(words));
+        tf.setAttribute('dir','rtl');tf.style.direction='rtl';tf.style.textAlign='right';tf.style.unicodeBidi='embed';
+        await sleep(300);
+      }
+      if(hasFrench){
+        for(const ta of document.querySelectorAll('textarea')){
+          if(ta!==tf){setReactTA(ta,taggedText);await sleep(200);break;}
+        }
       }
     }
     await save();
+    await clickApprove();
     notify('progress',i+1,tot);
     await sleep(cfg.delay||700);
   }
@@ -350,8 +380,9 @@
     await clickResume();
     const durStr=readDur();
     if(durStr){
-      const ms=durToMs(durStr)*17;
-      notify('timer',Math.round(ms/60000),durStr);
+      const mult=cfg.multiplier||17;
+      const ms=durToMs(durStr)*mult;
+      notify('timer',Math.round(ms/60000),durStr,mult);
       startTimer(ms,function(){notify('submit');});
     }
     const list=document.querySelector('[data-testid="annotation-list"]');
@@ -391,6 +422,15 @@
       '<label style="font-size:10px;color:#94a3b8;font-weight:700;white-space:nowrap;">DÉLAI ms</label>',
       '<input id="__AF_delay" type="number" value="700" min="200" max="5000" step="100" style="width:70px;padding:4px 6px;background:#1a1a2e;border:1px solid #2d2d6b;border-radius:4px;color:#e2e8f0;font-size:11px;">',
     '</div>',
+    /* editor / reviewer mode */
+    '<div style="display:flex;gap:6px;margin-bottom:10px;">',
+      '<label id="__AF_mode_editor_lbl" style="flex:1;text-align:center;padding:6px 4px;background:#7c3aed;border:1px solid #7c3aed;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;color:#fff;">',
+        '<input type="radio" name="__AF_mode" id="__AF_mode_editor" value="17" checked style="display:none;">Editor (×17)',
+      '</label>',
+      '<label id="__AF_mode_reviewer_lbl" style="flex:1;text-align:center;padding:6px 4px;background:#1a1a2e;border:1px solid #2d2d6b;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;color:#94a3b8;">',
+        '<input type="radio" name="__AF_mode" id="__AF_mode_reviewer" value="10" style="display:none;">Reviewer (×10)',
+      '</label>',
+    '</div>',
     /* start / stop */
     '<div style="display:flex;gap:8px;margin-bottom:8px;">',
       '<button id="__AF_go" style="flex:1;padding:8px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9654; Start</button>',
@@ -420,6 +460,23 @@
   const bwEl  = panel.querySelector('#__AF_bw');
   const goBtn = panel.querySelector('#__AF_go');
   const stpBtn= panel.querySelector('#__AF_stp');
+  const editorLbl   = panel.querySelector('#__AF_mode_editor_lbl');
+  const reviewerLbl = panel.querySelector('#__AF_mode_reviewer_lbl');
+
+  function getMultiplier(){
+    const checked=panel.querySelector('input[name="__AF_mode"]:checked');
+    return checked?parseInt(checked.value,10):17;
+  }
+  function refreshModeUI(){
+    const isEditor=getMultiplier()===17;
+    editorLbl.style.background=isEditor?'#7c3aed':'#1a1a2e';
+    editorLbl.style.borderColor=isEditor?'#7c3aed':'#2d2d6b';
+    editorLbl.style.color=isEditor?'#fff':'#94a3b8';
+    reviewerLbl.style.background=isEditor?'#1a1a2e':'#7c3aed';
+    reviewerLbl.style.borderColor=isEditor?'#2d2d6b':'#7c3aed';
+    reviewerLbl.style.color=isEditor?'#94a3b8':'#fff';
+  }
+  panel.querySelectorAll('input[name="__AF_mode"]').forEach(r=>r.addEventListener('change',refreshModeUI));
 
   const uiSt = t => stEl.textContent = t;
   function uiRun(on){
@@ -434,9 +491,9 @@
     uiSt(c+' / '+t);
   }
 
-  function notify(type,a,b){
+  function notify(type,a,b,c){
     if(type==='progress') uiProg(a,b);
-    else if(type==='timer')   uiSt('⏱ '+a+' min ('+b+' × 17)');
+    else if(type==='timer')   uiSt('⏱ '+a+' min ('+b+' × '+(c||17)+')');
     else if(type==='submit')  { stopAllTimers(); uiSt('Submit Task ✓'); uiRun(false); }
     else if(type==='error')   { uiSt('Erreur: '+a); uiRun(false); }
     else if(type==='done')    { uiProg(a,a); uiSt('Terminé ✓'); uiRun(false); }
@@ -447,7 +504,7 @@
   goBtn.addEventListener('click', async function(){
     const delay=parseInt(panel.querySelector('#__AF_delay').value)||700;
     stop=false;
-    const cfg={delay};
+    const cfg={delay,multiplier:getMultiplier()};
     async function doRun(){
       stopAllTimers();
       uiRun(true);
