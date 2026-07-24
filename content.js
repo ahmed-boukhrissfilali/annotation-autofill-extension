@@ -5,6 +5,13 @@
   let stop = false, _submitTimer = null, _countdownTimer = null;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  /* ---- Empêche la popup native "quitter le site ?" avant reload ---- */
+  try { window.onbeforeunload = null; } catch (e) {}
+  window.addEventListener('beforeunload', function (e) {
+    e.stopImmediatePropagation();
+    delete e.returnValue;
+  }, true);
+
   /* ---- Arabic number words ---- */
   function numberToArabicWords(n) {
     if (n===0) return 'صفر';
@@ -138,12 +145,16 @@
   async function fillDDs(hasFrench,root,anchor){
     const dd=[{label:'Primary Type',value:'Speech'},{label:'Loudness Level',value:'Normal'},{label:'Segment Primary Language',value:'Arabic'},{label:'Segment Secondary Language',value:hasFrench?'French':'NONE'}];
     for(const{label,value}of dd){
-      const tr=findDD(label,root);
-      if(!tr) continue;
-      if(tr.textContent.toLowerCase().includes(value.toLowerCase())) continue;
-      await pickOpt(tr,value);
-      if(anchor) anchor.scrollIntoView({behavior:'smooth',block:'center'});
-      await sleep(300);
+      for(let attempt=0;attempt<4;attempt++){
+        let tr=findDD(label,root);
+        if(!tr){await sleep(300);continue;}
+        if(tr.textContent.toLowerCase().includes(value.toLowerCase())) break;
+        await pickOpt(tr,value);
+        if(anchor) anchor.scrollIntoView({behavior:'smooth',block:'center'});
+        await sleep(300);
+        tr=findDD(label,root);
+        if(tr&&tr.textContent.toLowerCase().includes(value.toLowerCase())) break;
+      }
     }
   }
 
@@ -266,7 +277,7 @@
     return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
   }
 
-  function startTimer(ms,onDone){
+  function startTimer(ms){
     if(_submitTimer) clearInterval(_submitTimer);
     if(_countdownTimer) clearInterval(_countdownTimer);
     const dl=Date.now()+ms;
@@ -288,9 +299,18 @@
         clearInterval(_countdownTimer);_countdownTimer=null;
         if(cntEl) cntEl.textContent='00:00:00';
         if(cntW) cntW.style.display='none';
-        const btn=document.querySelector('button[aria-label="Submit Task"]');
-        if(btn) ['mousedown','mouseup','click'].forEach(t=>btn.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));
-        onDone();
+        localStorage.removeItem('__AF_deadline');
+        if(stop) return;
+        const stEl=document.getElementById('__AF_st');
+        if(stEl) stEl.textContent='Remaining Items avant Submit…';
+        try{
+          await resolveRemainingItems(function(type,a){
+            if(type==='done'&&stEl) stEl.textContent='Remaining Items traités ('+a+') — Submit…';
+            else if(type==='error'&&stEl) stEl.textContent='Remaining Items: '+a;
+          });
+        }catch(e){}
+        if(stop) return;
+        await submitAndRelaunch();
       }
     },20000);
   }
@@ -342,6 +362,44 @@
     await sleep(cfg.delay||700);
   }
 
+  /* ---- Vérifie les slots vides (transcription + dropdowns) sans les remplir ---- */
+  async function verifySlots(notify){
+    const list=document.querySelector('[data-testid="annotation-list"]');
+    if(!list){notify('error','Liste introuvable.');return;}
+    const items=[...list.querySelectorAll('[data-testid^="annotation-list-item-"]')];
+    const tot=items.length;
+    if(!tot){notify('error','Aucun item trouvé.');return;}
+    const ddLabels=['Primary Type','Loudness Level','Segment Primary Language','Segment Secondary Language'];
+    const issues=[];
+    for(let i=0;i<items.length;i++){
+      if(stop){notify('stopped');return;}
+      const item=items[i];
+      await clickResume();
+      item.scrollIntoView({behavior:'smooth',block:'center'});
+      await sleep(300);
+      const p=getTrP(item);
+      const{plainText}=analyzeSpans(p);
+      const itemIssues=[];
+      if(!plainText) itemIssues.push('Transcription vide');
+      const wasEdit=clickEdit(item);
+      if(wasEdit){
+        for(let w=0;w<15&&!findDD('Primary Type',item);w++) await sleep(200);
+        for(const label of ddLabels){
+          const tr=findDD(label,item);
+          const txt=tr?tr.textContent.trim().toLowerCase():'';
+          if(!tr||!txt||txt.includes('select a value')) itemIssues.push(label);
+        }
+        clickEdit(item); // referme si le bouton reste libellé "Edit" (toggle)
+        await sleep(200);
+      } else {
+        itemIssues.push('Edit introuvable');
+      }
+      if(itemIssues.length) issues.push({index:i+1,issues:itemIssues});
+      notify('progress',i+1,tot);
+    }
+    notify('verifyDone',issues,tot);
+  }
+
   /* ---- Resolve remaining items ---- */
   async function resolveRemainingItems(uiNotify){
     const remBtn=document.querySelector('button[aria-label="Remaining items"]');
@@ -383,7 +441,7 @@
       const mult=cfg.multiplier||17;
       const ms=durToMs(durStr)*mult;
       notify('timer',Math.round(ms/60000),durStr,mult);
-      startTimer(ms,function(){notify('submit');});
+      startTimer(ms);
     }
     const list=document.querySelector('[data-testid="annotation-list"]');
     if(!list){notify('error','Liste introuvable.');return;}
@@ -394,7 +452,8 @@
       if(stop){notify('stopped');return;}
       await processItem(items[i],cfg,i,tot,notify);
     }
-    notify('done',tot);
+    if(_submitTimer) notify('waiting',tot);
+    else notify('done',tot);
   }
 
   /* ================================================================
@@ -439,6 +498,14 @@
     /* remaining items */
     '<div style="margin-bottom:10px;">',
       '<button id="__AF_rem" style="width:100%;padding:7px;background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9888; Remaining Items</button>',
+    '</div>',
+    /* test reload (vérifie que la popup "quitter le site" ne s\'affiche pas) */
+    '<div style="margin-bottom:10px;">',
+      '<button id="__AF_testreload" style="width:100%;padding:7px;background:#3f2d1a;color:#fbbf24;border:1px solid #92400e;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#8635; Test Reload (sans popup)</button>',
+    '</div>',
+    /* vérifier slots vides */
+    '<div style="margin-bottom:10px;">',
+      '<button id="__AF_verify" style="width:100%;padding:7px;background:#1a3a2e;color:#86efac;border:1px solid #15803d;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#128269; Vérifier Slots Vides</button>',
     '</div>',
     /* countdown timer — hidden until timer starts */
     '<div id="__AF_cntw" style="display:none;text-align:center;background:#0a0a14;border:1px solid #2d2d6b;border-radius:6px;padding:6px 4px;margin-bottom:8px;">',
@@ -494,68 +561,69 @@
   function notify(type,a,b,c){
     if(type==='progress') uiProg(a,b);
     else if(type==='timer')   uiSt('⏱ '+a+' min ('+b+' × '+(c||17)+')');
-    else if(type==='submit')  { stopAllTimers(); uiSt('Submit Task ✓'); uiRun(false); }
     else if(type==='error')   { uiSt('Erreur: '+a); uiRun(false); }
     else if(type==='done')    { uiProg(a,a); uiSt('Terminé ✓'); uiRun(false); }
     else if(type==='stopped') { uiSt('Arrêté'); uiRun(false); }
+    else if(type==='verifyDone') {
+      uiRun(false);
+      if(!a.length){ uiSt('✓ Vérif OK — aucun slot vide ('+b+' items)'); }
+      else {
+        console.log('[AutoFill] Slots vides détectés:', a);
+        const preview=a.slice(0,3).map(it=>'#'+it.index+': '+it.issues.join('/')).join(' | ');
+        uiSt(a.length+'/'+b+' item(s) incomplet(s) — '+preview+(a.length>3?' … (console)':''));
+      }
+    }
   }
 
-  /* Start button — restarts automatically after Submit */
+  /* ── Enchaîne Submit Task → Confirm Read → relance auto ── */
+  async function submitAndRelaunch(){
+    const clicked=await clickWhenEnabled(()=>document.querySelector('button[aria-label="Submit Task"]'),15000);
+    if(!clicked){uiSt('Submit Task introuvable/désactivé');uiRun(false);return;}
+    uiSt('Submit ✓ – Attente Confirm Read…');
+    let g=0;
+    while(g++<240&&!stop){
+      const cr=document.querySelector('button[aria-label="Confirm Read"]');
+      if(cr){
+        ['mousedown','mouseup','click'].forEach(t=>cr.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));
+        uiSt('Confirm Read ✓');
+        await sleep(1500);
+        if(stop){uiSt('Arrêté');uiRun(false);return;}
+        const cntW=document.getElementById('__AF_cntw');
+        const cntEl=document.getElementById('__AF_cnt');
+        if(cntW&&cntEl){
+          cntW.style.display='block';
+          for(let i=0;i<3;i++){
+            cntEl.style.opacity='0';await sleep(300);
+            cntEl.style.opacity='1';await sleep(300);
+          }
+        }
+        uiRun(false);
+        uiSt('⟳ Relance automatique…');
+        goBtn.click();
+        return;
+      }
+      await sleep(500);
+    }
+    uiSt('Terminé');
+    uiRun(false);
+  }
+
+  /* Start button — la boucle se relance seule après Submit (via reload) */
   goBtn.addEventListener('click', async function(){
     const delay=parseInt(panel.querySelector('#__AF_delay').value)||700;
     stop=false;
     const cfg={delay,multiplier:getMultiplier()};
-    async function doRun(){
-      stopAllTimers();
-      uiRun(true);
-      uiSt('En cours…');
-      bwEl.style.display='none';
-      barEl.style.width='0';
-      try {
-        await run(cfg, function(type,a,b){
-          if(type==='submit'){
-            stopAllTimers();
-            uiSt('Submit ✓ – Attente Confirm Read…');
-            (async function waitConfirm(){
-              while(!stop){
-                const cr=document.querySelector('button[aria-label="Confirm Read"]');
-                if(cr){
-                  cr.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-                  uiSt('Confirm Read ✓ – Remaining Items…');
-                  await sleep(1500);
-                  if(stop){uiSt('Arrêté');uiRun(false);return;}
-                  /* 1. Remaining Items */
-                  try{await resolveRemainingItems(notify);}catch(e){}
-                  if(stop){uiSt('Arrêté');uiRun(false);return;}
-                  /* 2. Flash timer display 3× pour signaler nouveau cycle */
-                  const cntW=document.getElementById('__AF_cntw');
-                  const cntEl=document.getElementById('__AF_cnt');
-                  if(cntW&&cntEl){
-                    cntW.style.display='block';
-                    for(let i=0;i<3;i++){
-                      cntEl.style.opacity='0';await sleep(300);
-                      cntEl.style.opacity='1';await sleep(300);
-                    }
-                  }
-                  /* 3. Relancer le script */
-                  if(!stop) await doRun();
-                  else {uiSt('Arrêté');uiRun(false);}
-                  return;
-                }
-                await sleep(500);
-              }
-              uiSt('Arrêté'); uiRun(false);
-            })();
-          } else {
-            notify(type,a,b);
-          }
-        });
-      } catch(e) {
-        uiSt('Erreur: '+e.message);
-        uiRun(false);
-      }
+    stopAllTimers();
+    uiRun(true);
+    uiSt('En cours…');
+    bwEl.style.display='none';
+    barEl.style.width='0';
+    try {
+      await run(cfg, notify);
+    } catch(e) {
+      uiSt('Erreur: '+e.message);
+      uiRun(false);
     }
-    await doRun();
   });
 
   /* Stop button */
@@ -570,8 +638,29 @@
     stop=false;
     uiRun(true);
     uiSt('Remaining items…');
-    try { await resolveRemainingItems(notify); }
+    try {
+      await resolveRemainingItems(notify);
+      if(stop) return;
+      await submitAndRelaunch();
+    }
     catch(e) { uiSt('Erreur: '+e.message); uiRun(false); }
+  });
+
+  /* Vérifier Slots Vides — parcourt tous les items et signale transcription/dropdowns vides */
+  panel.querySelector('#__AF_verify').addEventListener('click', async function(){
+    stop=false;
+    uiRun(true);
+    uiSt('Vérification en cours…');
+    bwEl.style.display='none';
+    barEl.style.width='0';
+    try { await verifySlots(notify); }
+    catch(e) { uiSt('Erreur: '+e.message); uiRun(false); }
+  });
+
+  /* Test Reload — vérifie que le reload ne déclenche pas la popup native "quitter le site" */
+  panel.querySelector('#__AF_testreload').addEventListener('click', function(){
+    localStorage.setItem('__AF_testReload','1');
+    location.reload();
   });
 
   /* Close button */
@@ -581,34 +670,28 @@
     panel.style.display='none';
   });
 
+  /* ── Auto-click Resume à chaque refresh, même si le script est arrêté ── */
+  setInterval(function(){
+    const btn=findResumeBtn();
+    if(btn) click(btn);
+  }, 3000);
+
   /* ── Restore timer after page refresh ── */
-  (async function restoreTimer(){
+  (function restoreTimer(){
     const saved=parseInt(localStorage.getItem('__AF_deadline')||'0',10);
     if(!saved) return;
     const remaining=saved-Date.now();
-    if(remaining<=0){localStorage.removeItem('__AF_deadline');localStorage.removeItem('__AF_onDoneKey');return;}
+    if(remaining<=0){localStorage.removeItem('__AF_deadline');return;}
     uiRun(true);
     uiSt('⟳ Timer restauré: '+fmtMs(remaining));
-    startTimer(remaining,async function(){
-      uiSt('Submit ✓ – Attente Confirm Read…');
-      let g=0;
-      while(g++<240&&!stop){
-        const cr=document.querySelector('button[aria-label="Confirm Read"]');
-        if(cr){
-          ['mousedown','mouseup','click'].forEach(t=>cr.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true})));
-          uiSt('Confirm Read ✓ – Remaining Items…');
-          await sleep(1500);
-          if(!stop) try{await resolveRemainingItems(notify);}catch(e){}
-          uiSt('Terminé ✓');
-          uiRun(false);
-          return;
-        }
-        await sleep(500);
-      }
-      uiSt('Terminé');
-      uiRun(false);
-    });
+    startTimer(remaining);
   })();
+
+  /* ── Confirme visuellement que le reload de test n'a pas déclenché la popup native ── */
+  if (localStorage.getItem('__AF_testReload') === '1') {
+    localStorage.removeItem('__AF_testReload');
+    uiSt('✓ Reload OK — aucune popup native');
+  }
 
   /* Drag */
   const dh=panel.querySelector('#__AF_drag');
