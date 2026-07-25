@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Annotation Auto-Fill",
-  "version": "4.2",
+  "version": "4.3",
   "description": "Remplissage automatique des dropdowns d'annotation",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["https://api.mymemory.translated.net/*", "https://ulabel-v2.uber.com/*"],

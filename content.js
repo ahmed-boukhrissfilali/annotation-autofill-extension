@@ -188,6 +188,63 @@
 
   function isDisabled(btn){return btn.disabled||btn.getAttribute('aria-disabled')==='true'||btn.getAttribute('data-disabled')==='true';}
 
+  /* ---- Classification (speaker demographics) : sélectionne NA sur tous les champs éligibles ---- */
+  function findClassificationPanel(){
+    for(const lbl of document.querySelectorAll('[data-baseweb="typo-labelsmall"]')){
+      if(lbl.textContent.trim().toLowerCase()!=='classification') continue;
+      for(let anc=lbl.parentElement,d=0;anc&&d<8;anc=anc.parentElement,d++){
+        if(anc.querySelector('li[data-baseweb="block"] [data-baseweb="typo-labelmedium"]')) return anc;
+      }
+    }
+    return null;
+  }
+
+  function findNavBtn(panel,label){
+    for(const btn of panel.querySelectorAll('button[data-baseweb="button"]')){
+      const t=btn.querySelector('title');
+      if(t&&t.textContent.trim().toLowerCase()===label.toLowerCase()) return btn;
+    }
+    return null;
+  }
+
+  function readClassifBadge(panel){
+    for(const s of panel.querySelectorAll('span[title]')){
+      const m=s.title.match(/(\d+)\s*\/\s*(\d+)/);
+      if(m) return{cur:parseInt(m[1],10),total:parseInt(m[2],10)};
+    }
+    return null;
+  }
+
+  async function setNAOnClassification(panel){
+    let count=0;
+    for(const lbl of panel.querySelectorAll('[data-baseweb="typo-labelmedium"]')){
+      const fieldLi=lbl.closest('li[data-baseweb="block"]');
+      if(!fieldLi) continue;
+      const options=[...fieldLi.querySelectorAll('li[answertextstyles]')];
+      if(!options.length) continue;
+      const naOpt=options.find(o=>o.textContent.trim().toUpperCase()==='NA');
+      if(naOpt){click(naOpt);count++;await sleep(200);}
+    }
+    return count;
+  }
+
+  async function fillClassificationNA(notify){
+    const panel=findClassificationPanel();
+    if(!panel){notify('error','Panneau Classification introuvable.');return;}
+    let guard=0,total=0;
+    while(guard++<20){
+      if(stop) break;
+      total+=await setNAOnClassification(panel);
+      const badge=readClassifBadge(panel);
+      const nextBtn=findNavBtn(panel,'Next annotation');
+      if(!nextBtn||isDisabled(nextBtn)) break;
+      if(badge&&badge.cur>=badge.total) break;
+      click(nextBtn);
+      await sleep(500);
+    }
+    notify('classifDone',total,guard);
+  }
+
   function findBtnByText(...labels){
     const btns=[...document.querySelectorAll('button[data-baseweb="button"]')];
     for(const label of labels){
@@ -436,7 +493,8 @@
   /* ---- Main run loop ---- */
   async function run(cfg,notify){
     await clickResume();
-    const durStr=readDur();
+    let durStr=readDur();
+    for(let w=0;w<20&&!durStr;w++){await sleep(300);await clickResume();durStr=readDur();}
     if(durStr){
       const mult=cfg.multiplier||17;
       const ms=durToMs(durStr)*mult;
@@ -462,7 +520,7 @@
   const panel=document.createElement('div');
   panel.id='__AF_panel';
   Object.assign(panel.style,{
-    position:'fixed',top:'20px',right:'20px',width:'270px',
+    position:'fixed',top:'20px',right:'20px',width:'296px',
     background:'#0f0f1a',border:'1px solid #2d2d6b',borderRadius:'10px',
     padding:'13px',color:'#e2e8f0',
     fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
@@ -470,19 +528,28 @@
     userSelect:'none'
   });
 
+  function sectionLbl(text){
+    return '<div style="font-size:9px;font-weight:700;color:#64748b;letter-spacing:1.5px;margin:12px 0 6px;">'+text+'</div>';
+  }
+  function toolBtn(id,icon,label,color,accent,title){
+    return '<button id="'+id+'" title="'+title+'" style="padding:7px 6px;background:#14141f;color:'+color+';border:1px solid #23233a;border-left:3px solid '+accent+';border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;text-align:left;line-height:1.25;">'+icon+' '+label+'</button>';
+  }
+
   panel.innerHTML=[
     /* drag bar */
     '<div id="__AF_drag" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #2d2d6b;cursor:grab;">',
       '<span style="font-size:10px;font-weight:700;color:#a78bfa;letter-spacing:1px;">&#9776; ANNOTATION AUTO-FILL</span>',
       '<button id="__AF_x" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;line-height:1;padding:0 2px;">&times;</button>',
     '</div>',
+
+    sectionLbl('RÉGLAGES'),
     /* delay input */
-    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">',
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">',
       '<label style="font-size:10px;color:#94a3b8;font-weight:700;white-space:nowrap;">DÉLAI ms</label>',
       '<input id="__AF_delay" type="number" value="700" min="200" max="5000" step="100" style="width:70px;padding:4px 6px;background:#1a1a2e;border:1px solid #2d2d6b;border-radius:4px;color:#e2e8f0;font-size:11px;">',
     '</div>',
     /* editor / reviewer mode */
-    '<div style="display:flex;gap:6px;margin-bottom:10px;">',
+    '<div style="display:flex;gap:6px;">',
       '<label id="__AF_mode_editor_lbl" style="flex:1;text-align:center;padding:6px 4px;background:#7c3aed;border:1px solid #7c3aed;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;color:#fff;">',
         '<input type="radio" name="__AF_mode" id="__AF_mode_editor" value="17" checked style="display:none;">Editor (×17)',
       '</label>',
@@ -490,34 +557,33 @@
         '<input type="radio" name="__AF_mode" id="__AF_mode_reviewer" value="10" style="display:none;">Reviewer (×10)',
       '</label>',
     '</div>',
+
+    sectionLbl('ACTIONS'),
     /* start / stop */
-    '<div style="display:flex;gap:8px;margin-bottom:8px;">',
-      '<button id="__AF_go" style="flex:1;padding:8px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9654; Start</button>',
-      '<button id="__AF_stp" disabled style="flex:1;padding:8px;background:#1f2937;color:#6b7280;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9632; Stop</button>',
+    '<div style="display:flex;gap:8px;">',
+      '<button id="__AF_go" style="flex:1;padding:9px;background:#7c3aed;color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9654; Start</button>',
+      '<button id="__AF_stp" disabled style="flex:1;padding:9px;background:#1f2937;color:#6b7280;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9632; Stop</button>',
     '</div>',
-    /* remaining items */
-    '<div style="margin-bottom:10px;">',
-      '<button id="__AF_rem" style="width:100%;padding:7px;background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#9888; Remaining Items</button>',
+
+    sectionLbl('OUTILS'),
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px;">',
+      toolBtn('__AF_rem','&#9888;','Remaining Items','#93c5fd','#1d4ed8','Traite les items restants puis relance le Submit'),
+      toolBtn('__AF_verify','&#128269;','Vérifier Slots','#86efac','#15803d','Scanne transcription + dropdowns vides sans les modifier'),
+      toolBtn('__AF_classif','&#127991;','Classif. &rarr; NA','#e9a8f5','#862d86','Sélectionne NA sur les champs de classification pour tous les speakers'),
+      toolBtn('__AF_testreload','&#8635;','Test Reload','#fbbf24','#92400e','Recharge la page pour vérifier que la popup native n’apparaît pas'),
     '</div>',
-    /* test reload (vérifie que la popup "quitter le site" ne s\'affiche pas) */
-    '<div style="margin-bottom:10px;">',
-      '<button id="__AF_testreload" style="width:100%;padding:7px;background:#3f2d1a;color:#fbbf24;border:1px solid #92400e;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#8635; Test Reload (sans popup)</button>',
-    '</div>',
-    /* vérifier slots vides */
-    '<div style="margin-bottom:10px;">',
-      '<button id="__AF_verify" style="width:100%;padding:7px;background:#1a3a2e;color:#86efac;border:1px solid #15803d;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;">&#128269; Vérifier Slots Vides</button>',
-    '</div>',
+
     /* countdown timer — hidden until timer starts */
-    '<div id="__AF_cntw" style="display:none;text-align:center;background:#0a0a14;border:1px solid #2d2d6b;border-radius:6px;padding:6px 4px;margin-bottom:8px;">',
+    '<div id="__AF_cntw" style="display:none;text-align:center;background:#0a0a14;border:1px solid #2d2d6b;border-radius:6px;padding:6px 4px;margin-top:10px;">',
       '<div style="font-size:9px;color:#64748b;font-weight:700;letter-spacing:1px;margin-bottom:2px;">TEMPS RESTANT (hh:mm:ss)</div>',
       '<div id="__AF_cnt" style="font-size:26px;font-weight:700;color:#a78bfa;letter-spacing:3px;font-family:monospace;">00:00:00</div>',
     '</div>',
     /* progress bar */
-    '<div id="__AF_bw" style="height:5px;background:#1a1a2e;border-radius:3px;overflow:hidden;margin-bottom:7px;display:none;">',
+    '<div id="__AF_bw" style="height:5px;background:#1a1a2e;border-radius:3px;overflow:hidden;margin:10px 0 7px;display:none;">',
       '<div id="__AF_b" style="height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#a78bfa);border-radius:3px;transition:width .3s;"></div>',
     '</div>',
     /* status text */
-    '<div id="__AF_st" style="text-align:center;font-size:11px;color:#94a3b8;">Prêt</div>'
+    '<div id="__AF_st" style="text-align:center;font-size:11px;color:#94a3b8;margin-top:6px;">Prêt</div>'
   ].join('');
 
   document.body.appendChild(panel);
@@ -572,6 +638,10 @@
         const preview=a.slice(0,3).map(it=>'#'+it.index+': '+it.issues.join('/')).join(' | ');
         uiSt(a.length+'/'+b+' item(s) incomplet(s) — '+preview+(a.length>3?' … (console)':''));
       }
+    }
+    else if(type==='classifDone') {
+      uiRun(false);
+      uiSt('✓ Classification: NA sélectionné sur '+a+' champ(s), '+b+' speaker(s) traité(s)');
     }
   }
 
@@ -654,6 +724,15 @@
     bwEl.style.display='none';
     barEl.style.width='0';
     try { await verifySlots(notify); }
+    catch(e) { uiSt('Erreur: '+e.message); uiRun(false); }
+  });
+
+  /* Classification -> NA */
+  panel.querySelector('#__AF_classif').addEventListener('click', async function(){
+    stop=false;
+    uiRun(true);
+    uiSt('Classification en cours…');
+    try { await fillClassificationNA(notify); }
     catch(e) { uiSt('Erreur: '+e.message); uiRun(false); }
   });
 
